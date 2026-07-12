@@ -1,6 +1,7 @@
 //! Tightens population deviation through deterministic border-unit flips. A move is eligible only
-//! when it strictly improves maximum deviation, attaches to the receiving district, leaves the
-//! donor connected under an articulation check, and does not touch a frozen district.
+//! when it improves maximum or total deviation, attaches to the receiving district, leaves the
+//! donor connected under an articulation check, and does not touch a frozen district. Candidates
+//! are ranked before connectivity checks so large graphs perform only the BFS work they need.
 
 use std::collections::BTreeSet;
 
@@ -29,13 +30,8 @@ pub(crate) fn rebalance_partition(
         .saturating_mul(bounds.districts() as usize)
         * 4;
     while (moves as usize) < max_moves {
-        let current_max = partition
-            .district_populations()
-            .iter()
-            .map(|population| bounds.deviation_numerator(*population))
-            .max()
-            .unwrap_or_default();
-        let mut best: Option<(u128, u32, u16)> = None;
+        let current_objective = balance_objective(bounds, partition.district_populations());
+        let mut candidates = Vec::<((u128, u128), u32, u16)>::new();
 
         for (node, &unit_population) in populations.iter().enumerate() {
             let donor = partition.assignment()[node];
@@ -48,9 +44,7 @@ pub(crate) fn rebalance_partition(
                 .map(|neighbor| partition.assignment()[*neighbor as usize])
                 .filter(|district| *district != donor && !frozen_districts.contains(district))
                 .collect::<BTreeSet<_>>();
-            if recipients.is_empty()
-                || !partition.district_is_connected_without(graph, donor, node as u32)
-            {
+            if recipients.is_empty() {
                 continue;
             }
             let node_population = u64::from(unit_population);
@@ -58,22 +52,20 @@ pub(crate) fn rebalance_partition(
                 let mut proposed_pops = partition.district_populations().to_vec();
                 proposed_pops[donor as usize] -= node_population;
                 proposed_pops[recipient as usize] += node_population;
-                let proposed_max = proposed_pops
-                    .iter()
-                    .map(|population| bounds.deviation_numerator(*population))
-                    .max()
-                    .unwrap_or_default();
-                if proposed_max >= current_max {
+                let proposed_objective = balance_objective(bounds, &proposed_pops);
+                if proposed_objective >= current_objective {
                     continue;
                 }
-                let candidate = (proposed_max, node as u32, recipient);
-                if best.is_none_or(|existing| candidate < existing) {
-                    best = Some(candidate);
-                }
+                candidates.push((proposed_objective, node as u32, recipient));
             }
         }
 
-        let Some((_, node, recipient)) = best else {
+        candidates.sort_unstable();
+        let selected = candidates.into_iter().find(|(_, node, _)| {
+            let donor = partition.assignment()[*node as usize];
+            partition.district_is_connected_without(graph, donor, *node)
+        });
+        let Some((_, node, recipient)) = selected else {
             break;
         };
         partition.apply_assignment_changes(graph, populations, &[(node, recipient)]);
@@ -89,4 +81,13 @@ pub(crate) fn rebalance_partition(
             .all(|population| bounds.contains(*population)),
         max_deviation_ppm,
     }
+}
+
+fn balance_objective(bounds: PopulationBounds, populations: &[u64]) -> (u128, u128) {
+    populations
+        .iter()
+        .map(|population| bounds.deviation_numerator(*population))
+        .fold((0_u128, 0_u128), |(maximum, total), deviation| {
+            (maximum.max(deviation), total + deviation)
+        })
 }

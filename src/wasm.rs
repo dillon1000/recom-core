@@ -13,7 +13,7 @@ struct WasmChainParams {
     districts: u16,
     seed: u64,
     pop_tolerance: f64,
-    county_surcharge: u64,
+    county_surcharge: f64,
     tree_attempts: u32,
     #[serde(default)]
     frozen_districts: Option<Vec<u16>>,
@@ -21,13 +21,13 @@ struct WasmChainParams {
     initial_assignment: Option<Vec<u16>>,
 }
 
-#[wasm_bindgen(js_name = Chain)]
-pub struct WasmChain {
+#[wasm_bindgen]
+pub struct Chain {
     inner: CoreChain,
 }
 
 #[wasm_bindgen]
-impl WasmChain {
+impl Chain {
     #[wasm_bindgen(constructor)]
     pub fn new(
         offsets: &[u32],
@@ -35,9 +35,18 @@ impl WasmChain {
         edge_county_cross: &[u8],
         populations: &[u32],
         params: JsValue,
-    ) -> Result<WasmChain, JsError> {
+    ) -> Result<Chain, JsError> {
         let raw: WasmChainParams = serde_wasm_bindgen::from_value(params)
             .map_err(|error| JsError::new(&format!("invalid chain parameters: {error}")))?;
+        if !raw.county_surcharge.is_finite()
+            || raw.county_surcharge < 0.0
+            || raw.county_surcharge.fract() != 0.0
+            || raw.county_surcharge > 9_007_199_254_740_991.0
+        {
+            return Err(JsError::new(
+                "county surcharge must be a nonnegative safe integer",
+            ));
+        }
         let frozen_districts = raw
             .frozen_districts
             .unwrap_or_default()
@@ -66,7 +75,7 @@ impl WasmChain {
                 districts: raw.districts,
                 seed: raw.seed,
                 pop_tolerance: raw.pop_tolerance,
-                county_surcharge: raw.county_surcharge,
+                county_surcharge: raw.county_surcharge as u64,
                 tree_attempts: raw.tree_attempts,
                 frozen_districts,
             },
