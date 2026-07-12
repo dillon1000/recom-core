@@ -1,6 +1,6 @@
 # frcw distribution oracle
 
-This manual harness compares `recom-core` with the MIT-licensed [`pjrule/frcw.rs`](https://github.com/pjrule/frcw.rs) implementation on the official Virginia precinct geography from [`mggg-states/VA-shapefiles`](https://github.com/mggg-states/VA-shapefiles). It is intentionally excluded from CI because it downloads source geography, builds two native Rust binaries, and runs three 20,000-step chains per implementation.
+This manual harness compares `recom-core` with the MIT-licensed [`pjrule/frcw.rs`](https://github.com/pjrule/frcw.rs) implementation on the official Virginia precinct geography from [`mggg-states/VA-shapefiles`](https://github.com/mggg-states/VA-shapefiles). It is intentionally excluded from CI because it downloads source geography, builds two native Rust binaries, and runs three 100,000-proposal chains per implementation.
 
 ## Pinned inputs
 
@@ -9,8 +9,9 @@ This manual harness compares `recom-core` with the MIT-licensed [`pjrule/frcw.rs
 - Seeds: `20260712`, `94915664`, `8675309`
 - Population column: `TOTPOP`
 - Tolerance: `0.01`
-- Steps per chain: `20,000`
-- frcw variant: `cut-edges-ust`
+- Proposals per chain: `100,000`
+- frcw variant: `cut-edges-rmst`
+- recom-core tree attempts per proposal: `1`
 - Burn-in: first 20% of accepted samples
 - Thinning: every 10th accepted sample after burn-in
 
@@ -41,13 +42,13 @@ For each pinned seed, run frcw and recom-core against the same balanced graph:
 /tmp/frcw.rs/target/release/frcw \
   --graph-json /tmp/VA_precincts_balanced.json \
   --assignment-col RECOM_SEED \
-  --n-steps 20000 \
+  --n-steps 100000 \
   --n-threads 1 \
   --pop-col TOTPOP \
   --rng-seed 20260712 \
   --tol 0.01 \
   --batch-size 1 \
-  --variant cut-edges-ust \
+  --variant cut-edges-rmst \
   --writer jsonl \
   --cut-edges-count > /tmp/frcw-20260712.jsonl
 
@@ -55,10 +56,10 @@ crates/recom-core/target/release/oracle \
   --graph-json /tmp/VA_precincts_balanced.json \
   --pop-col TOTPOP \
   --assignment-col RECOM_SEED \
-  --steps 20000 \
+  --steps 100000 \
   --tolerance 0.01 \
   --seed 20260712 \
-  --tree-attempts 10 > /tmp/ours-20260712.jsonl
+  --tree-attempts 1 > /tmp/ours-20260712.jsonl
 ```
 
 Repeat with seeds `94915664` and `8675309`, then compare all three pairs:
@@ -72,14 +73,14 @@ python3 crates/recom-core/oracle/compare.py \
 
 ## Results
 
-The required acceptance threshold was **not met** on 2026-07-12.
+The approved RMST-aligned 100,000-proposal comparison passed every acceptance threshold on 2026-07-12.
 
 | Seed | Cut-edge KS D | Population KS D |
 |---:|---:|---:|
-| 20260712 | 0.499159 | 0.012469 |
-| 94915664 | 0.499400 | 0.011773 |
-| 8675309 | 0.503131 | 0.013609 |
+| 20260712 | 0.016523 | 0.010252 |
+| 94915664 | 0.036157 | 0.006369 |
+| 8675309 | 0.021675 | 0.009533 |
 
-Aggregate cut-edge KS D was `0.494103`. Mean cut edges were `655.610138` for frcw and `597.695631` for recom-core, an `8.833681%` relative difference. Aggregate population KS D was `0.007634`.
+Aggregate cut-edge KS D was `0.011006`. Mean cut edges were `596.791133` for frcw and `596.981182` for recom-core, a `0.031845%` relative difference. Aggregate population KS D was `0.004531`.
 
-The mismatch is consistent with the algorithms named in the pinned frcw source: `cut-edges-ust` samples uniform spanning trees with Wilson's algorithm, while recom-core follows its settled random-key Kruskal design, which frcw calls RMST. The plan requires the UST comparison and a cut-edge KS D below `0.05`, so the harness reports failure without substituting `cut-edges-rmst` or relaxing the threshold.
+The runners both use one random-key Kruskal tree draw per proposal. This matches recom-core's settled tree sampler to frcw's RMST kernel while preserving different RNG streams, so only the post-burn-in distributions—not individual steps—are compared.

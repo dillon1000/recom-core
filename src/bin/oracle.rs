@@ -23,7 +23,7 @@ struct Arguments {
     pop_col: String,
     #[arg(long)]
     assignment_col: String,
-    #[arg(long, default_value_t = 20_000)]
+    #[arg(long, default_value_t = 100_000)]
     steps: u32,
     #[arg(long, default_value_t = 0.01)]
     tolerance: f64,

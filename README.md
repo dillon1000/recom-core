@@ -18,4 +18,4 @@ The generated `wasm-bindgen --target web` package is committed at `src/features/
 
 The balanced-tree-cut proposal structure follows the approach used by [`pjrule/frcw.rs`](https://github.com/pjrule/frcw.rs), distributed under the MIT License, and the broader ReCom algorithm described by the MGGG Redistricting Lab. This implementation is independent because it adds reproducible integer edge priorities, region-aware county surcharges, frozen districts, seed generation, a finishing rebalance pass, and a WASM-safe chunked API.
 
-The `oracle` feature enables the native GerryChain graph runner used for distributional comparisons. See [`oracle/README.md`](oracle/README.md) for the pinned procedure and latest results.
+The `oracle` feature enables the native GerryChain graph runner used for distributional comparisons. See the [pinned oracle procedure and latest results](https://github.com/dillon1000/recom-core/blob/main/oracle/README.md).
