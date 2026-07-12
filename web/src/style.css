@@ -22,6 +22,8 @@
   --soft: oklch(0.945 0.008 80);
   --accent: oklch(0.42 0.08 245);
   --danger: oklch(0.5 0.16 27);
+  --dem: #2563eb;
+  --rep: #dc2626;
 }
 
 * { box-sizing: border-box; }
@@ -178,6 +180,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .button--primary { border-color: var(--ink); background: var(--ink); color: var(--panel); }
 .button--primary:hover:not(:disabled) { background: oklch(0.26 0 0); }
 .button--full { width: 100%; margin-top: 12px; }
+.button--analytics { border-color: var(--ink); background: var(--soft); }
 
 .note, .error {
   margin: 12px 0 0;
@@ -214,6 +217,128 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .map-label span { color: #6f6a62; font-family: "Geist Mono Variable", monospace; font-size: 9px; letter-spacing: 0.055em; text-transform: uppercase; }
 .maplibregl-ctrl-group { border: 1px solid rgb(23 23 23 / 18%) !important; border-radius: 3px !important; box-shadow: 0 4px 15px rgb(36 30 22 / 8%) !important; }
 
+.map-hover {
+  position: absolute;
+  z-index: 3;
+  bottom: 16px;
+  left: 16px;
+  display: grid;
+  width: min(360px, calc(100% - 32px));
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid rgb(23 23 23 / 18%);
+  border-radius: 3px;
+  background: rgb(255 253 248 / 94%);
+  box-shadow: 0 8px 24px rgb(36 30 22 / 12%);
+  backdrop-filter: blur(10px);
+  font-family: "Geist Mono Variable", monospace;
+}
+.map-hover header { display: flex; justify-content: space-between; gap: 12px; }
+.map-hover header > div { display: grid; min-width: 0; gap: 3px; }
+.map-hover header span, .map-hover span { color: var(--muted); font-size: 8px; text-transform: uppercase; }
+.map-hover header strong { overflow: hidden; font: 650 13px/1.2 "Geist Variable", sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.map-hover header > b { display: grid; width: 34px; height: 28px; place-items: center; border: 1px solid var(--ink); border-radius: 2px; font-size: 10px; }
+.map-hover-stats { display: grid; grid-template-columns: repeat(2, 1fr); border: 1px solid var(--border); }
+.map-hover-stats > div { display: grid; gap: 3px; padding: 8px; border-right: 1px solid var(--border); }
+.map-hover-stats > div:nth-child(2n) { border-right: 0; }
+.map-hover-stats > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
+.map-hover-stats strong { font-size: 11px; }
+.map-hover-shares { display: grid; gap: 6px; }
+.map-hover-shares > div { display: grid; grid-template-columns: 120px 1fr 42px; align-items: center; gap: 7px; }
+.map-hover-shares > div > span { display: grid; gap: 2px; }
+.map-hover-shares > div > span b { color: var(--ink); font-size: 8px; }
+.map-hover-shares > div > span small { font-size: 8px; }
+.map-hover-shares > div > i, .map-hover-election > i { display: block; height: 4px; overflow: hidden; background: var(--soft); }
+.map-hover-shares > div > i b { display: block; height: 100%; background: var(--ink); }
+.map-hover-shares > div > strong, .map-hover-election strong { font-size: 9px; text-align: right; }
+.map-hover-election { display: grid; gap: 6px; }
+.map-hover-election > i { background: var(--rep); }
+.map-hover-election > i b { display: block; height: 100%; background: var(--dem); }
+.map-hover-election > div { display: flex; justify-content: space-between; }
+.map-hover > small { color: var(--muted); font-size: 8px; }
+
+.analytics-panel {
+  position: fixed;
+  z-index: 30;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: grid;
+  width: min(760px, calc(100vw - 410px));
+  min-width: 560px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgb(23 23 23 / 22%);
+  border-radius: 3px;
+  background: rgb(255 253 248 / 97%);
+  box-shadow: 0 22px 60px rgb(36 30 22 / 20%);
+  backdrop-filter: blur(16px);
+}
+.analytics-header { display: flex; justify-content: space-between; gap: 20px; padding: 20px 22px 18px; border-bottom: 1px solid var(--border); }
+.analytics-header > div { min-width: 0; }
+.analytics-header > div > span { color: var(--muted); font: 650 9px/1 "Geist Mono Variable", monospace; letter-spacing: .08em; }
+.analytics-header h2 { margin: 8px 0 5px; font-size: 25px; font-weight: 570; letter-spacing: -.04em; line-height: 1; }
+.analytics-header p { margin: 0; color: var(--muted); font-size: 11px; }
+.analytics-header button { width: 36px; height: 36px; border: 1px solid var(--border); border-radius: 3px; background: var(--soft); font-size: 20px; }
+.analytics-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+.analytics-tabs button { min-width: max-content; border: 0; border-right: 1px solid var(--border); background: transparent; padding: 12px 15px; color: var(--muted); font: 650 9px/1 "Geist Mono Variable", monospace; letter-spacing: .06em; text-transform: uppercase; }
+.analytics-tabs button[aria-current] { background: var(--ink); color: var(--panel); }
+.analytics-body { display: grid; gap: 27px; overflow-y: auto; padding: 20px 22px 28px; scrollbar-width: thin; }
+.analytics-body section { min-width: 0; }
+.analytics-body section > h3 { display: flex; gap: 9px; margin: 0 0 12px; font: 650 10px/1 "Geist Mono Variable", monospace; letter-spacing: .065em; text-transform: uppercase; }
+.analytics-body section > h3 span { color: var(--muted); }
+.analytics-body section > p { margin: -3px 0 14px; color: var(--muted); font: 9px/1.5 "Geist Mono Variable", monospace; }
+.analytics-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.analytics-columns h3 { margin: 0 0 12px; font: 650 10px/1 "Geist Mono Variable", monospace; text-transform: uppercase; }
+.analytics-columns h3 span { margin-right: 8px; color: var(--muted); }
+.analytics-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border); }
+.analytics-stats > div { min-width: 0; padding: 11px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.analytics-stats > div:nth-child(4n) { border-right: 0; }
+.analytics-stats span { display: block; overflow: hidden; color: var(--muted); font: 8px/1 "Geist Mono Variable", monospace; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.analytics-stats strong { display: block; margin-top: 6px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.deviation-chart, .share-bars, .election-chart { display: grid; max-height: 450px; gap: 6px; overflow-y: auto; font-family: "Geist Mono Variable", monospace; }
+.deviation-chart > div { display: grid; grid-template-columns: 30px 1fr 58px; align-items: center; gap: 8px; font-size: 9px; }
+.deviation-chart > div > i { position: relative; height: 9px; background: var(--soft); }
+.deviation-chart > div > i::after { position: absolute; top: -2px; bottom: -2px; left: 50%; width: 1px; background: var(--ink); content: ""; opacity: .45; }
+.deviation-chart > div > i b { position: absolute; top: 1px; bottom: 1px; background: var(--accent); }
+.deviation-chart b.left { right: 50%; background: oklch(0.58 0.11 40); }
+.deviation-chart b.right { left: 50%; }
+.deviation-chart strong { font-size: 9px; text-align: right; }
+.share-bars > div { display: grid; grid-template-columns: 100px 1fr 42px auto; align-items: center; gap: 8px; font-size: 9px; }
+.share-bars > div > span { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.share-bars > div > i { height: 6px; background: var(--soft); }
+.share-bars > div > i b { display: block; height: 100%; background: var(--ink); }
+.share-bars > div > strong { text-align: right; }
+.share-bars > div > small { min-width: 55px; text-align: right; }
+.histogram { display: grid; height: 170px; grid-template-columns: repeat(6, 1fr); align-items: end; gap: 7px; border-bottom: 1px solid var(--border); padding: 18px 8px 0; }
+.histogram > div { display: grid; height: 100%; grid-template-rows: 1fr auto auto; align-items: end; gap: 5px; text-align: center; }
+.histogram i { display: block; min-height: 2px; background: var(--ink); }
+.histogram strong, .histogram small { font: 9px/1 "Geist Mono Variable", monospace; }
+.demographic-matrix { max-height: 470px; overflow: auto; border: 1px solid var(--border); font-family: "Geist Mono Variable", monospace; }
+.matrix-row { display: grid; min-width: 470px; grid-template-columns: 62px repeat(4, minmax(90px, 1fr)); }
+.matrix-row > * { padding: 8px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); font-size: 9px; }
+.matrix-head { position: sticky; top: 0; background: var(--panel); color: var(--muted); text-transform: uppercase; }
+.matrix-row span { background: color-mix(in oklch, var(--accent) calc(var(--heat) * 74%), white); text-align: right; }
+.election-summary { display: grid; gap: 7px; }
+.election-summary > i { position: relative; display: block; height: 12px; overflow: hidden; background: var(--rep); }
+.election-summary > i b { display: block; height: 100%; background: var(--dem); }
+.election-summary > i em { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: white; }
+.election-summary > i.seats { height: 7px; margin-top: 8px; }
+.election-summary > div { display: flex; justify-content: space-between; font: 650 9px/1 "Geist Mono Variable", monospace; }
+.election-summary p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
+.election-chart > div { display: grid; grid-template-columns: 30px 1fr 46px; align-items: center; gap: 8px; font-size: 9px; }
+.election-chart > div > i { position: relative; height: 9px; background: color-mix(in oklch, var(--rep) 72%, white); }
+.election-chart > div > i.competitive { outline: 1px solid var(--ink); }
+.election-chart > div > i b { display: block; height: 100%; background: color-mix(in oklch, var(--dem) 76%, white); }
+.election-chart > div > i em { position: absolute; top: -2px; bottom: -2px; left: 50%; width: 1px; background: var(--ink); }
+.election-chart > div > strong { text-align: right; }
+.district-table-wrap { max-height: calc(100dvh - 225px); overflow: auto; border: 1px solid var(--border); }
+.district-table-wrap table { width: 100%; min-width: 850px; border-collapse: collapse; font: 9px/1.2 "Geist Mono Variable", monospace; font-variant-numeric: tabular-nums; }
+.district-table-wrap thead { position: sticky; top: 0; background: var(--panel); }
+.district-table-wrap th, .district-table-wrap td { padding: 9px 10px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.district-table-wrap th:first-child { text-align: left; }
+.methodology { padding: 11px 12px; border-left: 2px solid var(--border); background: var(--soft); color: var(--muted); font: 8px/1.55 "Geist Mono Variable", monospace; }
+
 @keyframes loading { from { width: 12%; } to { width: 74%; } }
 
 @media (max-width: 820px) {
@@ -223,6 +348,14 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   .viewer-header, .viewer-section, .viewer-footer { padding-right: 18px; padding-left: 18px; }
   .field input, .field select, .input-action button, .button { min-height: 44px; }
   .input-action { grid-template-columns: minmax(0, 1fr) 44px; }
+  .map-hover { right: 10px; bottom: 10px; left: 10px; width: auto; max-height: calc(100% - 60px); overflow-y: auto; }
+  .analytics-panel { top: 8px; right: 8px; bottom: 8px; left: 8px; width: auto; min-width: 0; }
+  .analytics-header { padding: 17px 16px 15px; }
+  .analytics-body { padding: 17px 16px 24px; }
+  .analytics-columns { grid-template-columns: 1fr; }
+  .analytics-stats { grid-template-columns: repeat(2, 1fr); }
+  .analytics-stats > div:nth-child(2n) { border-right: 0; }
+  .analytics-header button, .analytics-tabs button { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

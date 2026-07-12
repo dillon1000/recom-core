@@ -14,14 +14,23 @@ import type { AssignmentMap, Manifest, ManifestLayer } from "./types"
 const fineSource = "units"
 const coarseSource = "units-coarse"
 const edgeSource = "district-edges"
+const planetSource = "planet"
+const planetArchive = "https://tiles.totallynotacdn.com/map/planet-2026-05-21.pmtiles"
+const planetGlyphs = "https://tiles.totallynotacdn.com/map/glyphs/{fontstack}/{range}.pbf"
 let protocolInstalled = false
 
 export class ViewerMap {
   private assignment: AssignmentMap = {}
   private readonly map: maplibregl.Map
   private animationFrame: number | null = null
+  private hoveredFeature: { id: string | number; source: string; sourceLayer: string } | null = null
+  private hoveredUnitId: string | null = null
 
-  constructor(container: HTMLElement, private readonly manifest: Manifest) {
+  constructor(
+    container: HTMLElement,
+    private readonly manifest: Manifest,
+    private readonly onHover: (unitId: string | null) => void,
+  ) {
     installProtocol()
     this.map = new maplibregl.Map({
       attributionControl: false,
@@ -33,18 +42,25 @@ export class ViewerMap {
       minZoom: 1,
       style: {
         version: 8,
+        glyphs: planetGlyphs,
         sources: {},
         layers: [{ id: "background", type: "background", paint: { "background-color": "#eeeae3" } }],
       },
     })
     this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right")
+    this.map.addControl(new maplibregl.ScaleControl({ maxWidth: 110, unit: "imperial" }), "bottom-right")
+    this.map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right")
     this.map.on("load", () => {
+      installPlanetBase(this.map)
       this.installUnitLayers()
       this.installEdgeLayer()
+      installPlanetLabels(this.map)
       this.scheduleSync()
     })
     this.map.on("sourcedata", () => this.scheduleSync())
     this.map.on("moveend", () => this.scheduleSync())
+    this.map.on("mousemove", (event) => this.handleHover(event))
+    this.map.on("mouseout", () => this.clearHover())
   }
 
   setAssignment(assignment: AssignmentMap) {
@@ -54,7 +70,45 @@ export class ViewerMap {
 
   destroy() {
     if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame)
+    this.clearHover()
     this.map.remove()
+  }
+
+  private handleHover(event: maplibregl.MapMouseEvent) {
+    const layers = ["units-fill", "units-coarse-fill"].filter((layer) => this.map.getLayer(layer))
+    const feature = layers.length
+      ? this.map.queryRenderedFeatures(event.point, { layers })[0]
+      : undefined
+    if (!feature || feature.id === undefined || feature.id === null || !feature.sourceLayer) {
+      this.clearHover()
+      return
+    }
+    const next = { id: feature.id, source: feature.source, sourceLayer: feature.sourceLayer }
+    if (
+      !this.hoveredFeature
+      || this.hoveredFeature.id !== next.id
+      || this.hoveredFeature.source !== next.source
+    ) {
+      this.clearHover()
+      this.hoveredFeature = next
+      this.map.setFeatureState(next, { hover: true })
+    }
+    this.map.getCanvas().style.cursor = "crosshair"
+    const unitId = String(feature.id)
+    if (unitId !== this.hoveredUnitId) {
+      this.hoveredUnitId = unitId
+      this.onHover(unitId)
+    }
+  }
+
+  private clearHover() {
+    if (this.hoveredFeature) this.map.setFeatureState(this.hoveredFeature, { hover: false })
+    this.hoveredFeature = null
+    this.map.getCanvas().style.cursor = ""
+    if (this.hoveredUnitId !== null) {
+      this.hoveredUnitId = null
+      this.onHover(null)
+    }
   }
 
   private installUnitLayers() {
@@ -185,11 +239,117 @@ function installProtocol() {
   protocolInstalled = true
 }
 
+function installPlanetBase(map: maplibregl.Map) {
+  map.addSource(planetSource, {
+    type: "vector",
+    url: `pmtiles://${planetArchive}`,
+    minzoom: 0,
+    maxzoom: 15,
+    attribution: "© OpenMapTiles © OpenStreetMap contributors",
+  })
+  map.addLayer({
+    id: "planet-landcover", type: "fill", source: planetSource, "source-layer": "landcover",
+    paint: {
+      "fill-color": [
+        "match", ["get", "class"],
+        ["wood", "forest"], "#d7e7d2",
+        ["grass", "scrub", "farmland", "meadow"], "#e3ead7",
+        ["ice", "snow"], "#eff6ff", "#eeeae3",
+      ],
+      "fill-opacity": 0.7,
+    },
+  })
+  map.addLayer({
+    id: "planet-landuse", type: "fill", source: planetSource, "source-layer": "landuse", minzoom: 6,
+    paint: {
+      "fill-color": [
+        "match", ["get", "class"],
+        ["residential", "suburb"], "#ece7de",
+        ["industrial", "commercial"], "#e5e7eb",
+        ["cemetery", "park", "pitch"], "#dcebd6", "#edf2ef",
+      ],
+      "fill-opacity": ["interpolate", ["linear"], ["zoom"], 6, 0.18, 12, 0.52],
+    },
+  })
+  map.addLayer({
+    id: "planet-park", type: "fill", source: planetSource, "source-layer": "park", minzoom: 6,
+    paint: { "fill-color": "#d7ead4", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 6, 0.24, 12, 0.64] },
+  })
+  map.addLayer({
+    id: "planet-water", type: "fill", source: planetSource, "source-layer": "water",
+    paint: { "fill-color": "#c7ddeb", "fill-opacity": 0.92 },
+  })
+  map.addLayer({
+    id: "planet-waterway", type: "line", source: planetSource, "source-layer": "waterway", minzoom: 8,
+    paint: { "line-color": "#a9cfe4", "line-opacity": 0.72, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.4, 13, 1.5] },
+  })
+  map.addLayer({
+    id: "planet-boundary", type: "line", source: planetSource, "source-layer": "boundary", minzoom: 3,
+    filter: ["all", ["!=", ["get", "maritime"], 1], ["match", ["to-number", ["get", "admin_level"]], [4, 6], true, false]],
+    paint: { "line-color": "#64748b", "line-dasharray": [2, 2], "line-opacity": 0.5, "line-width": 0.8 },
+  })
+  map.addLayer({
+    id: "planet-road-casing", type: "line", source: planetSource, "source-layer": "transportation", minzoom: 5,
+    filter: roadClassFilter(),
+    paint: { "line-color": "#ffffff", "line-opacity": ["interpolate", ["linear"], ["zoom"], 5, 0.28, 11, 0.78], "line-width": ["interpolate", ["linear"], ["zoom"], 5, 0.8, 9, 2.5, 14, 7] },
+  })
+  map.addLayer({
+    id: "planet-roads", type: "line", source: planetSource, "source-layer": "transportation", minzoom: 5,
+    filter: roadClassFilter(),
+    paint: {
+      "line-color": ["match", ["get", "class"], ["motorway", "trunk"], "#d97706", ["primary", "secondary"], "#94a3b8", "#cbd5e1"],
+      "line-opacity": ["interpolate", ["linear"], ["zoom"], 5, 0.3, 11, 0.74],
+      "line-width": ["interpolate", ["linear"], ["zoom"], 5, 0.35, 9, 1.2, 14, 4.2],
+    },
+  })
+  map.addLayer({
+    id: "planet-buildings", type: "fill", source: planetSource, "source-layer": "building", minzoom: 14,
+    paint: { "fill-color": "#94a3b8", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 14, 0.12, 17, 0.34] },
+  })
+}
+
+function installPlanetLabels(map: maplibregl.Map) {
+  map.addLayer({
+    id: "planet-road-labels", type: "symbol", source: planetSource, "source-layer": "transportation_name", minzoom: 10,
+    filter: roadClassFilter(),
+    layout: { "symbol-placement": "line", "text-field": nameExpression(), "text-font": ["Geist Regular"], "text-size": ["interpolate", ["linear"], ["zoom"], 10, 10, 15, 13] },
+    paint: { "text-color": "#475569", "text-halo-color": "#fffdf8", "text-halo-width": 1 },
+  })
+  map.addLayer({
+    id: "planet-place-labels", type: "symbol", source: planetSource, "source-layer": "place", minzoom: 4,
+    filter: ["match", ["get", "class"], ["city", "town", "village", "suburb"], true, false],
+    layout: { "text-field": nameExpression(), "text-font": ["Geist Medium"], "text-size": ["interpolate", ["linear"], ["zoom"], 4, 11, 9, 16], "text-allow-overlap": false },
+    paint: { "text-color": "#171717", "text-halo-color": "#fffdf8", "text-halo-width": 1.2 },
+  })
+  map.addLayer({
+    id: "planet-poi-labels", type: "symbol", source: planetSource, "source-layer": "poi", minzoom: 12,
+    layout: { "text-field": nameExpression(), "text-font": ["Geist Regular"], "text-size": ["interpolate", ["linear"], ["zoom"], 12, 10, 16, 12], "text-allow-overlap": false },
+    paint: { "text-color": "#475569", "text-halo-color": "#fffdf8", "text-halo-width": 1 },
+  })
+}
+
+function nameExpression(): ExpressionSpecification {
+  return ["coalesce", ["get", "name_en"], ["get", "name"], ["get", "NAME"], ["get", "label"]] as ExpressionSpecification
+}
+
+function roadClassFilter() {
+  return [
+    "match", ["get", "class"],
+    ["motorway", "trunk", "primary", "secondary", "tertiary", "minor", "service", "street"],
+    true, false,
+  ] as unknown as maplibregl.FilterSpecification
+}
+
 function unitPaint(districts: number): FillLayerSpecification["paint"] {
   return {
     "fill-antialias": false,
     "fill-color": districtExpression(districts),
-    "fill-opacity": ["case", [">", ["coalesce", ["feature-state", "district"], 0], 0], 0.82, 0.48],
+    "fill-opacity": [
+      "case",
+      ["boolean", ["feature-state", "hover"], false], 0.94,
+      [">", ["coalesce", ["feature-state", "district"], 0], 0], 0.68,
+      0.3,
+    ],
   }
 }
 

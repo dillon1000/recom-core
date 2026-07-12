@@ -90,7 +90,21 @@ async function parseUnits(buffer: ArrayBuffer) {
       const unit = {
         unitId: String(row.unitId ?? ""),
         countyFips: String(row.countyFips ?? ""),
+        countyName: String(row.countyName ?? ""),
+        label: String(row.label ?? ""),
         popTotal: Number(row.popTotal),
+        popWhite: finite(row.popWhite),
+        popBlack: finite(row.popBlack),
+        popHispanic: finite(row.popHispanic),
+        popAsian: finite(row.popAsian),
+        popNative: finite(row.popNative),
+        popPacific: finite(row.popPacific),
+        popOther: finite(row.popOther),
+        president2024: {
+          dem: finite(row["partisanship.president2024.dem"]),
+          rep: finite(row["partisanship.president2024.rep"]),
+          other: finite(row["partisanship.president2024.other"]),
+        },
       }
       if (!unit.unitId || !Number.isSafeInteger(unit.popTotal) || unit.popTotal < 0) {
         throw new Error(`State statistics contain an invalid unit at row ${units.length}.`)
@@ -99,6 +113,11 @@ async function parseUnits(buffer: ArrayBuffer) {
     }
   }
   return units
+}
+
+function finite(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
 function validateManifest(manifest: Manifest, slug: string) {

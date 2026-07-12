@@ -12,7 +12,21 @@ export type StateEntry = {
 export type Unit = {
   unitId: string
   countyFips: string
+  countyName: string
+  label: string
   popTotal: number
+  popWhite: number
+  popBlack: number
+  popHispanic: number
+  popAsian: number
+  popNative: number
+  popPacific: number
+  popOther: number
+  president2024: {
+    dem: number
+    rep: number
+    other: number
+  }
 }
 
 export type UnitAdjacency = Record<string, string[]>

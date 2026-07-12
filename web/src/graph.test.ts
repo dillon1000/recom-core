@@ -22,8 +22,8 @@ describe("public viewer graph adapter", () => {
     const graph = buildGraph(
       { a: ["b"], b: ["a"] },
       [
-        { unitId: "a", countyFips: "001", popTotal: 10 },
-        { unitId: "b", countyFips: "003", popTotal: 20 },
+        unit("a", "001", 10),
+        unit("b", "003", 20),
       ],
     )
     expect([...graph.offsets]).toEqual([0, 1, 2])
@@ -32,3 +32,21 @@ describe("public viewer graph adapter", () => {
     expect([...graph.populations]).toEqual([10, 20])
   })
 })
+
+function unit(unitId: string, countyFips: string, popTotal: number) {
+  return {
+    unitId,
+    countyFips,
+    countyName: "County",
+    label: unitId,
+    popTotal,
+    popWhite: 0,
+    popBlack: 0,
+    popHispanic: 0,
+    popAsian: 0,
+    popNative: 0,
+    popPacific: 0,
+    popOther: 0,
+    president2024: { dem: 0, rep: 0, other: 0 },
+  }
+}
