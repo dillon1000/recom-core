@@ -1,0 +1,35 @@
+# Verifies both the native algorithm and independently runnable browser viewer.
+# The pinned WASM toolchain is the only deployment-sensitive configuration;
+# pull requests and main pushes must reproduce the same release build locally.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked --version 0.15.0
+      - name: Install browser dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify native and browser builds
+        run: pnpm check
