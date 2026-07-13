@@ -120,6 +120,38 @@ export type ChainStatus = {
   frontierSize: number
 }
 
+export type ProposalOutcome =
+  | "accepted"
+  | "noEligibleBoundary"
+  | "noSpanningTree"
+  | "noBalancedCut"
+
+export type ProposalTrace = {
+  proposal: number
+  outcome: ProposalOutcome
+  score: PlanScore
+  changeStart: number
+  changeCount: number
+  frontierChanged: boolean
+  frontierRetained?: boolean
+  demSeats?: number
+  repSeats?: number
+}
+
+export type ProposalTraceBatch = {
+  status: ChainStatus
+  proposals: ProposalTrace[]
+  changedNodes: number[]
+  changedDistricts: number[]
+}
+
+export type ProposalTraceChunk = {
+  proposals: ProposalTrace[]
+  changedNodes: Uint32Array
+  changedDistricts: Uint16Array
+  checkpoint: Uint16Array
+}
+
 export type GraphInput = {
   edgeCountyCross: Uint8Array
   edgeWeights?: Uint32Array
@@ -157,12 +189,20 @@ export type WorkerRequest = {
 
 export type WorkerResponse =
   | { type: "ready"; requestId: 0 }
-  | { type: "progress"; requestId: number; completed: number; status: ChainStatus }
+  | {
+      type: "progress"
+      requestId: number
+      completed: number
+      status: ChainStatus
+      trace: ProposalTraceChunk
+    }
   | {
       type: "complete"
       requestId: number
       assignment: Uint16Array
       bestAssignment: Uint16Array
+      initialAssignment: Uint16Array
+      initialScore: PlanScore
       frontier: PlanScore[]
       status: ChainStatus
     }

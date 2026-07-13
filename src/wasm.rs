@@ -101,6 +101,15 @@ impl Chain {
             .map_err(|error| JsError::new(&format!("could not serialize chain status: {error}")))
     }
 
+    pub fn step_traced(&mut self, count: u32) -> Result<JsValue, JsError> {
+        let mut batch = self.inner.step_traced(count);
+        for district in &mut batch.changed_districts {
+            *district += 1;
+        }
+        serde_wasm_bindgen::to_value(&batch)
+            .map_err(|error| JsError::new(&format!("could not serialize proposal trace: {error}")))
+    }
+
     pub fn rebalance(&mut self, tolerance: f64) -> Result<JsValue, JsError> {
         let status = self.inner.rebalance(tolerance).map_err(js_error)?;
         serde_wasm_bindgen::to_value(&status).map_err(|error| {

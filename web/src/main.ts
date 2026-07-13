@@ -1,8 +1,8 @@
 /**
  * Owns the standalone public viewer UI. Inputs are URL-backed controls and the
  * 50-state data loader; outputs are deterministic plans, live map updates,
- * shareable setup URLs, and portable JSON assignments. Generation is always
- * local and unsigned—there is no account, upload, or server compute path.
+ * shareable proposal URLs, map-linked chain exploration, and portable JSON
+ * assignments. Generation is local and unsigned with no server compute path.
  */
 import "./style.css"
 
@@ -19,6 +19,7 @@ import { loadState, type LoadedState } from "./data"
 import { assignmentWithinTolerance, denseToAssignment } from "./graph"
 import { ViewerMap } from "./map"
 import type { MapColorMode } from "./mapColors"
+import { ProposalPanel } from "./proposalPanel"
 import ReComWorker from "./recom.worker?worker"
 import {
   resultAssignment,
@@ -30,6 +31,7 @@ import type {
   AssignmentMap,
   ChainStatus,
   PlanScore,
+  ProposalTraceChunk,
   ViewerResolution,
   WorkerRequest,
   WorkerResponse,
@@ -104,6 +106,7 @@ app.innerHTML = `
         </div>
         <button class="button button--full" id="download" type="button">Download assignment JSON</button>
         <button class="button button--full button--analytics" id="open-analytics" type="button">Open detailed analytics</button>
+        <button class="button button--full button--explorer" id="open-explorer" type="button" hidden>Explore proposals</button>
       </section>
 
       <footer class="viewer-footer"><span>MIT / DETERMINISTIC WASM</span><a href="https://github.com/dillon1000/recom-core">SOURCE</a></footer>
@@ -143,6 +146,7 @@ const elements = {
   mapState: get("map-state"), mapStatus: get("map-status"), population: get("population-value"),
   randomSeed: button("random-seed"), rejected: get("rejected-value"), resultSection: get("result-section"),
   openAnalytics: button("open-analytics"),
+  openExplorer: button("open-explorer"),
   partisanLegend: get("partisan-legend"),
   resolutionButtons: Array.from(document.querySelectorAll<HTMLButtonElement>("[data-resolution]")),
   resolutionHelp: get("resolution-help"),
@@ -179,16 +183,45 @@ let assignment: AssignmentMap | null = null
 let sampleAssignment: AssignmentMap | null = null
 let bestAssignment: AssignmentMap | null = null
 let frontierScores: PlanScore[] = []
+let proposalTrace: ProposalTraceChunk[] = []
+let proposalInitialAssignment: Uint16Array | null = null
+let proposalInitialScore: PlanScore | null = null
+let proposalScoreOverride: PlanScore | null = null
+let selectedProposal: number | null = null
 let lastStatus: ChainStatus | null = null
 let analytics: PlanAnalytics | null = null
 let unitLookup = new Map<string, LoadedState["units"][number]>()
 let requestId = 0
+
+const proposalPanel = new ProposalPanel({
+  onSelect: (denseAssignment, score, proposal) => {
+    if (!loaded || !lastStatus) return
+    assignment = denseToAssignment(loaded.graph.unitIds, denseAssignment)
+    proposalScoreOverride = score
+    selectedProposal = proposal
+    finishPlan(BigInt(elements.seed.value), false)
+  },
+  onCompare: (denseAssignment) => {
+    viewerMap?.setComparison(
+      loaded && denseAssignment
+        ? denseToAssignment(loaded.graph.unitIds, denseAssignment)
+        : null,
+    )
+  },
+  onBranch: (denseAssignment, proposal) => {
+    void generate(denseAssignment, proposal)
+  },
+})
 
 activateResultMode(setup.resultMode)
 
 elements.state.addEventListener("change", () => void loadSelectedState())
 for (const control of elements.resultModeButtons) {
   control.addEventListener("click", () => {
+    proposalPanel.close()
+    proposalScoreOverride = null
+    selectedProposal = null
+    updateProposalUrl(null)
     activateResultMode(control.dataset.resultMode === "optimized" ? "optimized" : "sample")
   })
 }
@@ -216,6 +249,7 @@ elements.download.addEventListener("click", downloadAssignment)
 elements.openAnalytics.addEventListener("click", () => {
   if (analytics) elements.analyticsPanel.hidden = false
 })
+elements.openExplorer.addEventListener("click", () => openProposalExplorer())
 elements.closeAnalytics.addEventListener("click", () => { elements.analyticsPanel.hidden = true })
 elements.analyticsTabs.addEventListener("click", (event) => {
   const target = event.target as HTMLButtonElement
@@ -227,7 +261,10 @@ elements.analyticsTabs.addEventListener("click", (event) => {
   renderAnalytics(tab, analytics)
 })
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") elements.analyticsPanel.hidden = true
+  if (event.key === "Escape") {
+    elements.analyticsPanel.hidden = true
+    proposalPanel.close()
+  }
 })
 
 void loadSelectedState()
@@ -241,6 +278,12 @@ async function loadSelectedState() {
   sampleAssignment = null
   bestAssignment = null
   frontierScores = []
+  proposalTrace = []
+  proposalInitialAssignment = null
+  proposalInitialScore = null
+  proposalScoreOverride = null
+  selectedProposal = null
+  proposalPanel.reset()
   lastStatus = null
   analytics = null
   unitLookup = new Map()
@@ -291,8 +334,11 @@ async function loadSelectedState() {
   }
 }
 
-async function generate() {
+async function generate(branchAssignment?: Uint16Array, sourceProposal?: number) {
   if (!loaded) return
+  const requestedProposal = branchAssignment
+    ? null
+    : new URLSearchParams(location.search).get("proposal")
   let params: ReturnType<typeof readControls>
   try {
     params = readControls(loaded.manifest.counts.districts)
@@ -306,6 +352,13 @@ async function generate() {
   sampleAssignment = null
   bestAssignment = null
   frontierScores = []
+  proposalTrace = []
+  proposalInitialAssignment = null
+  proposalInitialScore = null
+  proposalScoreOverride = null
+  selectedProposal = null
+  proposalPanel.reset()
+  if (requestedProposal === null) updateProposalUrl(null)
   lastStatus = null
   clearResult()
   setError(null)
@@ -325,6 +378,9 @@ async function generate() {
   recomWorker = worker
   elements.generate.textContent = "Cancel"
   elements.runLabel.textContent = `Running 0 / ${params.steps.toLocaleString()} proposals`
+  if (sourceProposal !== undefined) {
+    elements.generationNote.textContent = `This chain branches from proposal ${sourceProposal.toLocaleString()} of the preceding run using the current controls and seed.`
+  }
   setFormDisabled(true)
 
   worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
@@ -333,6 +389,7 @@ async function generate() {
     if (response.type === "ready") return
     if (response.type === "progress") {
       lastStatus = response.status
+      proposalTrace.push(response.trace)
       const percent = (response.completed / Math.max(1, params.steps)) * 100
       setProgress(percent)
       elements.runLabel.textContent = `Running ${response.completed.toLocaleString()} / ${params.steps.toLocaleString()} proposals`
@@ -352,8 +409,12 @@ async function generate() {
     sampleAssignment = denseToAssignment(loaded?.graph.unitIds ?? [], response.assignment)
     bestAssignment = denseToAssignment(loaded?.graph.unitIds ?? [], response.bestAssignment)
     frontierScores = response.frontier
+    proposalInitialAssignment = response.initialAssignment
+    proposalInitialScore = response.initialScore
     assignment = resultAssignment(currentResultMode(), sampleAssignment, bestAssignment)
     finishPlan(params.seed)
+    elements.openExplorer.hidden = proposalTrace.length === 0
+    if (requestedProposal !== null) openProposalExplorer(Number(requestedProposal))
   }
   worker.onerror = (event) => {
     recomWorker = null
@@ -376,12 +437,14 @@ async function generate() {
     },
     params: {
       ...params,
-      ...(assignmentWithinTolerance(
-        loaded.units,
-        loaded.initialAssignment,
-        params.districts,
-        params.popTolerance,
-      ) ? { initialAssignment: loaded.initialAssignment.slice().buffer } : {}),
+      ...(branchAssignment
+        ? { initialAssignment: branchAssignment.slice().buffer }
+        : assignmentWithinTolerance(
+            loaded.units,
+            loaded.initialAssignment,
+            params.districts,
+            params.popTolerance,
+          ) ? { initialAssignment: loaded.initialAssignment.slice().buffer } : {}),
     },
   }
   const transfers = [
@@ -397,7 +460,9 @@ async function generate() {
 
 function finishPlan(seed: bigint, openAnalytics = true) {
   if (!loaded || !assignment || !lastStatus) return
-  const selectedStatus = resultStatus(currentResultMode(), lastStatus)
+  const selectedStatus = proposalScoreOverride
+    ? { ...lastStatus, currentScore: proposalScoreOverride }
+    : resultStatus(currentResultMode(), lastStatus)
   analytics = computeAnalytics(
     loaded.units,
     assignment,
@@ -414,8 +479,10 @@ function finishPlan(seed: bigint, openAnalytics = true) {
   if (partisanControl) partisanControl.disabled = false
   renderScore(selectedStatus)
   setProgress(100)
-  elements.runLabel.textContent = `${loaded.manifest.counts.districts}-district ${currentResultMode() === "optimized" ? "optimized" : "sample"} ready`
-  elements.mapStatus.textContent = `${loaded.manifest.editUnit === "precinct" ? "Precincts" : "Block groups"} · generated plan`
+  elements.runLabel.textContent = selectedProposal === null
+    ? `${loaded.manifest.counts.districts}-district ${currentResultMode() === "optimized" ? "optimized" : "sample"} ready`
+    : `Proposal ${selectedProposal.toLocaleString()} selected`
+  elements.mapStatus.textContent = `${loaded.manifest.editUnit === "precinct" ? "Precincts" : "Block groups"} · ${selectedProposal === null ? "generated plan" : `proposal ${selectedProposal.toLocaleString()}`}`
   elements.generate.textContent = "Generate again"
   elements.population.textContent = Math.round(analytics.totalPopulation).toLocaleString()
   elements.ideal.textContent = Math.round(analytics.idealPopulation).toLocaleString()
@@ -445,6 +512,7 @@ function renderScore(status: ChainStatus) {
 
 function clearResult() {
   elements.resultSection.hidden = true
+  elements.openExplorer.hidden = true
   elements.scoreGrid.hidden = true
   setProgress(0)
   if (viewerMap) viewerMap.setAssignment({})
@@ -494,6 +562,13 @@ function updateUrl() {
   history.replaceState(null, "", url)
 }
 
+function updateProposalUrl(proposal: number | null) {
+  const url = new URL(location.href)
+  if (proposal === null) url.searchParams.delete("proposal")
+  else url.searchParams.set("proposal", String(proposal))
+  history.replaceState(null, "", url)
+}
+
 async function copySetup() {
   updateUrl()
   await navigator.clipboard.writeText(location.href)
@@ -503,7 +578,9 @@ async function copySetup() {
 
 function downloadAssignment() {
   if (!loaded || !assignment || !lastStatus) return
-  const selectedStatus = resultStatus(currentResultMode(), lastStatus)
+  const selectedStatus = proposalScoreOverride
+    ? { ...lastStatus, currentScore: proposalScoreOverride }
+    : resultStatus(currentResultMode(), lastStatus)
   const payload = {
     algorithm: "recom-core",
     algorithmVersion: "0.1.0",
@@ -517,7 +594,8 @@ function downloadAssignment() {
       populationTolerancePercent: Number(elements.tolerance.value),
       countySurcharge: Number(elements.county.value),
     },
-    output: currentResultMode(),
+    output: selectedProposal === null ? currentResultMode() : "proposal",
+    proposal: selectedProposal,
     status: selectedStatus,
     analytics,
     assignment,
@@ -546,6 +624,26 @@ function activateResultMode(mode: ResultMode) {
     finishPlan(BigInt(elements.seed.value), false)
   }
   updateUrl()
+}
+
+function openProposalExplorer(requestedProposal?: number) {
+  if (!loaded || !proposalInitialAssignment || !proposalInitialScore || proposalTrace.length === 0) return
+  proposalPanel.open({
+    chunks: proposalTrace,
+    districtCount: loaded.manifest.counts.districts,
+    frontier: frontierScores,
+    initialAssignment: proposalInitialAssignment,
+    initialScore: proposalInitialScore,
+    selectedProposal: Number.isFinite(requestedProposal)
+      ? Math.max(0, Math.floor(requestedProposal ?? 0))
+      : selectedProposal
+        ?? (lastStatus ? lastStatus.stepsAccepted + lastStatus.stepsRejected : 0),
+    storageKey: `${loaded.manifest.state.slug}:${elements.seed.value}`,
+    unitVotes: loaded.graph.unitIds.map((unitId) => {
+      const result = unitLookup.get(unitId)?.president2024
+      return { dem: result?.dem ?? 0, rep: result?.rep ?? 0 }
+    }),
+  })
 }
 
 function currentResultMode(): ResultMode {

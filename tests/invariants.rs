@@ -5,7 +5,7 @@
 mod common;
 
 use proptest::prelude::*;
-use recom_core::{Chain, ChainParams, CsrGraph, Partition, PopulationBounds};
+use recom_core::{Chain, ChainParams, CsrGraph, Partition, PopulationBounds, ProposalOutcome};
 
 use common::{assert_partition_invariants, grid_graph, row_stripes};
 
@@ -238,4 +238,47 @@ fn county_preservation_rejects_values_above_the_public_range() {
         Some(row_stripes(4, 4, 2)),
     );
     assert!(result.is_err());
+}
+
+#[test]
+fn proposal_trace_reconstructs_every_accepted_change() {
+    let graph = grid_graph(8, 12, false);
+    let populations = vec![1_u32; graph.node_count()];
+    let initial = row_stripes(8, 12, 4);
+    let params = ChainParams {
+        districts: 4,
+        seed: 0x51a7_e2026,
+        pop_tolerance: 0.25,
+        county_surcharge: 20,
+        tree_attempts: 8,
+        frozen_districts: Vec::new(),
+    };
+    let mut traced = Chain::new(
+        graph.clone(),
+        populations.clone(),
+        params.clone(),
+        Some(initial.clone()),
+    )
+    .expect("fixture is valid");
+    let mut ordinary =
+        Chain::new(graph, populations, params, Some(initial.clone())).expect("fixture is valid");
+
+    let batch = traced.step_traced(200);
+    let ordinary_status = ordinary.step(200);
+    let mut reconstructed = initial;
+    for proposal in &batch.proposals {
+        let start = proposal.change_start as usize;
+        let end = start + proposal.change_count as usize;
+        if proposal.outcome != ProposalOutcome::Accepted {
+            assert_eq!(proposal.change_count, 0);
+        }
+        for index in start..end {
+            reconstructed[batch.changed_nodes[index] as usize] = batch.changed_districts[index];
+        }
+    }
+
+    assert_eq!(batch.proposals.len(), 200);
+    assert_eq!(batch.status, ordinary_status);
+    assert_eq!(reconstructed, traced.assignment());
+    assert_eq!(traced.assignment(), ordinary.assignment());
 }

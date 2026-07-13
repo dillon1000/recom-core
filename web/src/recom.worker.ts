@@ -1,12 +1,17 @@
 /**
  * Runs recom-core in a dedicated worker. Inputs are transfer-owned CSR buffers,
  * a deterministic seed, and bounded proposal parameters; outputs are chunked
- * progress plus the final sampled assignment. Terminating the worker is the
- * immediate cancellation boundary during synchronous chain construction.
+ * progress plus compact proposal deltas, periodic checkpoints, and the final
+ * sampled assignment. Termination is the immediate cancellation boundary.
  */
 import initializeWasm, { Chain } from "./wasm/recom_core"
 import wasmUrl from "./wasm/recom_core_bg.wasm?url"
-import type { ChainStatus, WorkerRequest, WorkerResponse } from "./types"
+import type {
+  ChainStatus,
+  ProposalTraceBatch,
+  WorkerRequest,
+  WorkerResponse,
+} from "./types"
 
 const chunkSize = 200
 const ready = initializeWasm({ module_or_path: wasmUrl })
@@ -25,7 +30,7 @@ async function run(request: WorkerRequest) {
   try {
     await ready
     const graph = request.graph
-    const { initialAssignment, steps, ...params } = request.params
+    const { initialAssignment: requestedInitialAssignment, steps, ...params } = request.params
     chain = new Chain(
       new Uint32Array(graph.offsets),
       new Uint32Array(graph.neighbors),
@@ -35,18 +40,38 @@ async function run(request: WorkerRequest) {
       {
         ...params,
         frozenDistricts: new Uint16Array(),
-        ...(initialAssignment
-          ? { initialAssignment: new Uint16Array(initialAssignment) }
+        ...(requestedInitialAssignment
+          ? { initialAssignment: new Uint16Array(requestedInitialAssignment) }
           : {}),
       },
     )
+    const initialAssignment = chain.assignment()
     let completed = 0
     let status = chain.step(0) as ChainStatus
+    const initialScore = status.currentScore
     while (completed < steps) {
       const count = Math.min(chunkSize, steps - completed)
-      status = chain.step(count) as ChainStatus
+      const batch = chain.step_traced(count) as ProposalTraceBatch
+      status = batch.status
       completed += count
-      post({ type: "progress", requestId: request.requestId, completed, status })
+      const changedNodes = Uint32Array.from(batch.changedNodes)
+      const changedDistricts = Uint16Array.from(batch.changedDistricts)
+      const checkpoint = chain.assignment()
+      self.postMessage(
+        {
+          type: "progress",
+          requestId: request.requestId,
+          completed,
+          status,
+          trace: {
+            proposals: batch.proposals,
+            changedNodes,
+            changedDistricts,
+            checkpoint,
+          },
+        } satisfies WorkerResponse,
+        { transfer: [changedNodes.buffer, changedDistricts.buffer, checkpoint.buffer] },
+      )
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
     // Generation exposes the seeded chain endpoint. The separately tracked
@@ -60,10 +85,14 @@ async function run(request: WorkerRequest) {
       requestId: request.requestId,
       assignment,
       bestAssignment,
+      initialAssignment,
+      initialScore,
       frontier,
       status,
     }
-    self.postMessage(response, { transfer: [assignment.buffer, bestAssignment.buffer] })
+    self.postMessage(response, {
+      transfer: [assignment.buffer, bestAssignment.buffer, initialAssignment.buffer],
+    })
   } catch (error) {
     post({ type: "error", requestId: request.requestId, error: message(error) })
   } finally {

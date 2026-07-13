@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs"
 import { beforeAll, describe, expect, it } from "vitest"
 
 import initializeWasm, { Chain } from "./wasm/recom_core"
-import type { ChainStatus, PlanScore } from "./types"
+import type { ChainStatus, PlanScore, ProposalTraceBatch } from "./types"
 
 beforeAll(async () => {
   await initializeWasm({
@@ -58,6 +58,28 @@ describe("recom-core WASM scoring contract", () => {
 
   it("rejects county preservation outside the public 0–50 range", () => {
     expect(() => createChain(null, 51)).toThrow(/between 0 and 50/)
+  })
+
+  it("emits one-based compact deltas that reconstruct the final assignment", () => {
+    const chain = createChain(null)
+    const reconstructed = chain.assignment()
+    const batch = chain.step_traced(40) as ProposalTraceBatch
+    for (const proposal of batch.proposals) {
+      for (
+        let index = proposal.changeStart;
+        index < proposal.changeStart + proposal.changeCount;
+        index += 1
+      ) {
+        const node = batch.changedNodes[index]
+        const district = batch.changedDistricts[index]
+        if (node !== undefined && district !== undefined) reconstructed[node] = district
+      }
+    }
+    expect(batch.proposals).toHaveLength(40)
+    expect(batch.changedNodes).toHaveLength(batch.changedDistricts.length)
+    expect([...reconstructed]).toEqual([...chain.assignment()])
+    expect(batch.changedDistricts.every((district) => district === 1 || district === 2)).toBe(true)
+    chain.free()
   })
 })
 

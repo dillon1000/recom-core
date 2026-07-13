@@ -1,6 +1,7 @@
 //! Orchestrates ReCom proposals and owns all mutable solver state. Each requested step selects an
 //! eligible district boundary, redraws up to `tree_attempts` region-aware trees, applies one
-//! balanced cut, and updates cumulative acceptance and best-plan status without external callbacks.
+//! balanced cut, and updates cumulative acceptance and best-plan status. Optional compact trace
+//! batches expose every outcome and accepted assignment delta without cloning complete plans.
 
 use std::collections::BTreeSet;
 
@@ -38,6 +39,48 @@ pub struct ChainStatus {
     pub current_score: PlanScore,
     pub best_score: PlanScore,
     pub frontier_size: u32,
+}
+
+/// Why one attempted proposal did or did not advance the chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProposalOutcome {
+    Accepted,
+    NoEligibleBoundary,
+    NoSpanningTree,
+    NoBalancedCut,
+}
+
+/// Metadata for one attempted proposal. Accepted changes occupy the declared range in the owning
+/// [`TraceBatch`]; rejected attempts have an empty range and retain the preceding plan score.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposalTrace {
+    pub proposal: u32,
+    pub outcome: ProposalOutcome,
+    pub score: PlanScore,
+    pub change_start: u32,
+    pub change_count: u32,
+    pub frontier_changed: bool,
+}
+
+/// Compact changes and per-proposal metadata returned by [`Chain::step_traced`]. Node indexes and
+/// district labels align one-for-one; native labels are zero-based and the WASM wrapper converts
+/// districts to the browser's one-based contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceBatch {
+    pub status: ChainStatus,
+    pub proposals: Vec<ProposalTrace>,
+    pub changed_nodes: Vec<u32>,
+    pub changed_districts: Vec<u16>,
+}
+
+#[derive(Debug)]
+struct StepTrace {
+    outcome: ProposalOutcome,
+    changes: Vec<(u32, u16)>,
+    frontier_changed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +171,36 @@ impl Chain {
         self.status()
     }
 
+    /// Advances the chain while retaining compact deltas for every accepted proposal and explicit
+    /// reasons for every rejection. The ordinary [`Chain::step`] path remains allocation-light.
+    pub fn step_traced(&mut self, count: u32) -> TraceBatch {
+        let mut proposals = Vec::with_capacity(count as usize);
+        let mut changed_nodes = Vec::new();
+        let mut changed_districts = Vec::new();
+        for _ in 0..count {
+            let trace = self.step_once();
+            let change_start = changed_nodes.len() as u32;
+            for (node, district) in &trace.changes {
+                changed_nodes.push(*node);
+                changed_districts.push(*district);
+            }
+            proposals.push(ProposalTrace {
+                proposal: self.steps_accepted + self.steps_rejected,
+                outcome: trace.outcome,
+                score: self.current_score,
+                change_start,
+                change_count: trace.changes.len() as u32,
+                frontier_changed: trace.frontier_changed,
+            });
+        }
+        TraceBatch {
+            status: self.status(),
+            proposals,
+            changed_nodes,
+            changed_districts,
+        }
+    }
+
     pub fn rebalance(&mut self, tolerance: f64) -> Result<RebalanceStatus, RecomError> {
         let bounds = PopulationBounds::new(
             self.bounds.total_population(),
@@ -189,7 +262,7 @@ impl Chain {
         }
     }
 
-    fn step_once(&mut self) {
+    fn step_once(&mut self) -> StepTrace {
         let eligible_edges = self
             .partition
             .cut_edges()
@@ -205,13 +278,18 @@ impl Chain {
             .collect::<Vec<_>>();
         if eligible_edges.is_empty() {
             self.steps_rejected += 1;
-            return;
+            return StepTrace {
+                outcome: ProposalOutcome::NoEligibleBoundary,
+                changes: Vec::new(),
+                frontier_changed: false,
+            };
         }
         let boundary_edge =
             self.graph.edges()[eligible_edges[self.rng.index(eligible_edges.len())] as usize];
         let district_a = self.partition.assignment()[boundary_edge.a as usize];
         let district_b = self.partition.assignment()[boundary_edge.b as usize];
 
+        let mut built_tree = false;
         for _ in 0..self.tree_attempts {
             let Some(tree) = random_spanning_tree(
                 &self.graph,
@@ -223,6 +301,7 @@ impl Chain {
             ) else {
                 continue;
             };
+            built_tree = true;
             let Some(proposal) = choose_balanced_cut(
                 &tree,
                 &self.populations,
@@ -233,25 +312,40 @@ impl Chain {
             ) else {
                 continue;
             };
-            self.partition.apply_assignment_changes(
-                &self.graph,
-                &self.populations,
-                &proposal.changes,
-            );
+            let changes = proposal
+                .changes
+                .into_iter()
+                .filter(|(node, district)| self.partition.assignment()[*node as usize] != *district)
+                .collect::<Vec<_>>();
+            self.partition
+                .apply_assignment_changes(&self.graph, &self.populations, &changes);
             self.steps_accepted += 1;
-            self.update_scores();
-            return;
+            let frontier_changed = self.update_scores();
+            return StepTrace {
+                outcome: ProposalOutcome::Accepted,
+                changes,
+                frontier_changed,
+            };
         }
         self.steps_rejected += 1;
+        StepTrace {
+            outcome: if built_tree {
+                ProposalOutcome::NoBalancedCut
+            } else {
+                ProposalOutcome::NoSpanningTree
+            },
+            changes: Vec::new(),
+            frontier_changed: false,
+        }
     }
 
-    fn update_scores(&mut self) {
+    fn update_scores(&mut self) -> bool {
         self.current_score = self.partition.score();
         debug_assert_eq!(
             self.current_score,
             self.partition.full_recompute_score(&self.graph)
         );
         self.frontier
-            .insert(self.current_score, self.partition.assignment().to_vec());
+            .insert(self.current_score, self.partition.assignment().to_vec())
     }
 }
