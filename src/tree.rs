@@ -1,6 +1,6 @@
-//! Draws a random spanning tree over the two districts selected for recombination. Candidate edges
-//! receive integer ChaCha keys plus the optional county-crossing surcharge, then deterministic
-//! Kruskal selection produces a tree without platform-dependent floating-point weights.
+//! Draws a spanning tree over the two districts selected for recombination. The standard sampler
+//! assigns integer ChaCha keys before deterministic Kruskal selection; the reversible sampler uses
+//! Wilson's loop-erased random walks to draw from the uniform spanning-tree distribution.
 
 use crate::{graph::CsrGraph, rng::ChainRng};
 
@@ -69,6 +69,99 @@ pub(crate) fn random_spanning_tree(
     })
 }
 
+pub(crate) fn uniform_spanning_tree(
+    graph: &CsrGraph,
+    assignment: &[u16],
+    district_a: u16,
+    district_b: u16,
+    rng: &mut ChainRng,
+) -> Option<SpanningTree> {
+    let nodes = assignment
+        .iter()
+        .enumerate()
+        .filter_map(|(node, district)| {
+            (*district == district_a || *district == district_b).then_some(node as u32)
+        })
+        .collect::<Vec<_>>();
+    if nodes.len() < 2 {
+        return None;
+    }
+
+    let mut in_region = vec![false; graph.node_count()];
+    for &node in &nodes {
+        in_region[node as usize] = true;
+    }
+    let mut region_neighbors = vec![Vec::<u32>::new(); graph.node_count()];
+    for &node in &nodes {
+        region_neighbors[node as usize].extend(
+            graph
+                .neighbors_of(node as usize)
+                .iter()
+                .copied()
+                .filter(|neighbor| in_region[*neighbor as usize]),
+        );
+        if region_neighbors[node as usize].is_empty() {
+            return None;
+        }
+    }
+
+    let root = nodes[0] as usize;
+    let mut connected = vec![false; graph.node_count()];
+    let mut stack = vec![root];
+    connected[root] = true;
+    let mut connected_count = 0_usize;
+    while let Some(node) = stack.pop() {
+        connected_count += 1;
+        for &neighbor in &region_neighbors[node] {
+            if !connected[neighbor as usize] {
+                connected[neighbor as usize] = true;
+                stack.push(neighbor as usize);
+            }
+        }
+    }
+    if connected_count != nodes.len() {
+        return None;
+    }
+
+    let walk_step_budget = nodes
+        .len()
+        .saturating_mul(nodes.len())
+        .saturating_mul(1_024)
+        .max(4_096);
+    let mut walk_steps = 0_usize;
+    let mut in_tree = vec![false; graph.node_count()];
+    let mut next = vec![u32::MAX; graph.node_count()];
+    let mut edges = Vec::with_capacity(nodes.len() - 1);
+    in_tree[root] = true;
+
+    for &start in &nodes {
+        let mut node = start as usize;
+        while !in_tree[node] {
+            if walk_steps == walk_step_budget {
+                return None;
+            }
+            walk_steps += 1;
+            let neighbors = &region_neighbors[node];
+            let neighbor = neighbors[rng.index(neighbors.len())];
+            next[node] = neighbor;
+            node = neighbor as usize;
+        }
+
+        node = start as usize;
+        while !in_tree[node] {
+            in_tree[node] = true;
+            let neighbor = next[node];
+            if neighbor == u32::MAX {
+                return None;
+            }
+            edges.push((node as u32, neighbor));
+            node = neighbor as usize;
+        }
+    }
+
+    (edges.len() + 1 == nodes.len()).then_some(SpanningTree { nodes, edges })
+}
+
 #[derive(Debug)]
 struct DisjointSet {
     parent: Vec<usize>,
@@ -105,5 +198,45 @@ impl DisjointSet {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    #[test]
+    fn wilson_sampler_is_uniform_on_a_four_cycle() {
+        let graph = four_cycle();
+        let assignment = vec![0, 0, 1, 1];
+        let mut counts = BTreeMap::<Vec<(u32, u32)>, usize>::new();
+        for seed in 0..4_000 {
+            let tree = uniform_spanning_tree(&graph, &assignment, 0, 1, &mut ChainRng::new(seed))
+                .expect("the cycle is connected");
+            let mut edges = tree
+                .edges
+                .into_iter()
+                .map(|(a, b)| if a < b { (a, b) } else { (b, a) })
+                .collect::<Vec<_>>();
+            edges.sort_unstable();
+            *counts.entry(edges).or_default() += 1;
+        }
+
+        assert_eq!(counts.len(), 4);
+        for count in counts.values() {
+            assert!((800..=1_200).contains(count), "tree count was {count}");
+        }
+    }
+
+    fn four_cycle() -> CsrGraph {
+        CsrGraph::new(
+            vec![0, 2, 4, 6, 8],
+            vec![1, 3, 0, 2, 1, 3, 0, 2],
+            vec![0; 8],
+            None,
+        )
+        .expect("cycle graph is valid")
     }
 }
