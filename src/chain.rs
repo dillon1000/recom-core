@@ -4,7 +4,9 @@
 
 use std::collections::BTreeSet;
 
-use recom_scoring::{FrontierEntry, ParetoArchive, PlanScore};
+use recom_scoring::{
+    FrontierEntry, ParetoArchive, PlanScore, SelectionWeights, MAX_COUNTY_PRESERVATION,
+};
 use serde::Serialize;
 
 use crate::{
@@ -23,7 +25,7 @@ pub struct ChainParams {
     pub districts: u16,
     pub seed: u64,
     pub pop_tolerance: f64,
-    pub county_surcharge: u64,
+    pub county_surcharge: u32,
     pub tree_attempts: u32,
     pub frozen_districts: Vec<u16>,
 }
@@ -45,7 +47,8 @@ pub struct Chain {
     partition: Partition,
     bounds: PopulationBounds,
     rng: ChainRng,
-    county_surcharge: u64,
+    county_surcharge: u32,
+    selection_weights: SelectionWeights,
     tree_attempts: u32,
     frozen_districts: BTreeSet<u16>,
     steps_accepted: u32,
@@ -71,6 +74,11 @@ impl Chain {
         }
         if params.tree_attempts == 0 {
             return Err(RecomError::new("tree_attempts must be greater than zero"));
+        }
+        if params.county_surcharge > MAX_COUNTY_PRESERVATION {
+            return Err(RecomError::new(
+                "county preservation must be an integer between 0 and 50",
+            ));
         }
         if params
             .frozen_districts
@@ -103,6 +111,7 @@ impl Chain {
             bounds,
             rng,
             county_surcharge: params.county_surcharge,
+            selection_weights: SelectionWeights::for_county_preservation(params.county_surcharge),
             tree_attempts: params.tree_attempts,
             frozen_districts: params.frozen_districts.into_iter().collect(),
             steps_accepted: 0,
@@ -143,7 +152,7 @@ impl Chain {
     pub fn best_assignment(&self) -> &[u16] {
         &self
             .frontier
-            .best()
+            .best_with_weights(self.selection_weights)
             .expect("every chain frontier contains its initial assignment")
             .assignment
     }
@@ -173,7 +182,7 @@ impl Chain {
             current_score: self.current_score,
             best_score: self
                 .frontier
-                .best()
+                .best_with_weights(self.selection_weights)
                 .expect("every chain frontier contains its initial assignment")
                 .score,
             frontier_size: self.frontier.entries().len() as u32,

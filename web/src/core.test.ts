@@ -55,9 +55,13 @@ describe("recom-core WASM scoring contract", () => {
     expect([...chain.best_assignment()]).toEqual([...chain.frontier_assignment(0)])
     chain.free()
   })
+
+  it("rejects county preservation outside the public 0–50 range", () => {
+    expect(() => createChain(null, 51)).toThrow(/between 0 and 50/)
+  })
 })
 
-function createChain(edgeWeights: Uint32Array | null) {
+function createChain(edgeWeights: Uint32Array | null, countySurcharge = 0) {
   return new Chain(
     new Uint32Array([0, 1, 3, 5, 6]),
     new Uint32Array([1, 0, 2, 1, 3, 2]),
@@ -68,7 +72,7 @@ function createChain(edgeWeights: Uint32Array | null) {
       districts: 2,
       seed: 42n,
       popTolerance: 0.01,
-      countySurcharge: 0,
+      countySurcharge,
       treeAttempts: 8,
       frozenDistricts: new Uint16Array(),
       initialAssignment: new Uint16Array([1, 1, 2, 2]),

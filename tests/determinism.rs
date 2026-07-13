@@ -17,7 +17,7 @@ fn fixed_seed_matches_golden_assignment_hash() {
     let hash = assignment_hash(&first);
     assert_eq!(
         hash,
-        "4409fb7560bfc64aba874a7aa65d8cea36bb262cfd44cba2e3272f8df440f12e"
+        "0c8de06eface48e3f7f8556ab58ebcd0ef9e8d2a0037523cf8a0677d593f5c8c"
     );
 }
 
@@ -31,7 +31,7 @@ fn run_chain() -> Vec<u16> {
             districts: 4,
             seed: 0x5eed_cafe_2026_0712,
             pop_tolerance: 0.05,
-            county_surcharge: 100_000,
+            county_surcharge: 10,
             tree_attempts: 12,
             frozen_districts: Vec::new(),
         },

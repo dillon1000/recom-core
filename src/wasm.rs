@@ -42,10 +42,10 @@ impl Chain {
         if !raw.county_surcharge.is_finite()
             || raw.county_surcharge < 0.0
             || raw.county_surcharge.fract() != 0.0
-            || raw.county_surcharge > 9_007_199_254_740_991.0
+            || raw.county_surcharge > f64::from(recom_scoring::MAX_COUNTY_PRESERVATION)
         {
             return Err(JsError::new(
-                "county surcharge must be a nonnegative safe integer",
+                "county preservation must be an integer between 0 and 50",
             ));
         }
         let frozen_districts = raw
@@ -86,7 +86,7 @@ impl Chain {
                 districts: raw.districts,
                 seed: raw.seed,
                 pop_tolerance: raw.pop_tolerance,
-                county_surcharge: raw.county_surcharge as u64,
+                county_surcharge: raw.county_surcharge as u32,
                 tree_attempts: raw.tree_attempts,
                 frozen_districts,
             },

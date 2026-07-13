@@ -134,6 +134,7 @@ export type GenerationParams = {
   seed: bigint
   popTolerance: number
   steps: number
+  /** Bounded 0–50 preference shared by spanning-tree proposals and optimized-plan selection. */
   countySurcharge: number
   treeAttempts: number
   initialAssignment: Uint16Array

@@ -56,7 +56,7 @@ fn run_invariant_case(
             districts,
             seed,
             pop_tolerance: tolerance,
-            county_surcharge: 10_000,
+            county_surcharge: 10,
             tree_attempts: 8,
             frozen_districts: Vec::new(),
         },
@@ -94,7 +94,7 @@ fn frontier_entries_are_nondominated_and_rescore_exactly() {
             districts: 4,
             seed: 0xfeed_2026,
             pop_tolerance: tolerance,
-            county_surcharge: 10_000,
+            county_surcharge: 10,
             tree_attempts: 8,
             frozen_districts: Vec::new(),
         },
@@ -189,4 +189,53 @@ fn graph_rejects_misaligned_or_asymmetric_weights() {
     )
     .is_err());
     assert!(CsrGraph::new(offsets, neighbors, county_flags, Some(vec![3, 4])).is_err());
+}
+
+#[test]
+fn county_preservation_changes_generation_and_optimized_selection() {
+    let graph = grid_graph(8, 12, false);
+    let populations = vec![1_u32; graph.node_count()];
+    let initial = row_stripes(8, 12, 4);
+    let run = |county_surcharge| {
+        let mut chain = Chain::new(
+            graph.clone(),
+            populations.clone(),
+            ChainParams {
+                districts: 4,
+                seed: 0x2026_0712,
+                pop_tolerance: 0.25,
+                county_surcharge,
+                tree_attempts: 8,
+                frozen_districts: Vec::new(),
+            },
+            Some(initial.clone()),
+        )
+        .expect("fixture is valid");
+        chain.step(500);
+        (chain.assignment().to_vec(), chain.status().best_score)
+    };
+
+    let (neutral_assignment, neutral_best) = run(0);
+    let (preserved_assignment, preserved_best) = run(50);
+    assert_ne!(neutral_assignment, preserved_assignment);
+    assert!(preserved_best.county_fragments < neutral_best.county_fragments);
+}
+
+#[test]
+fn county_preservation_rejects_values_above_the_public_range() {
+    let graph = grid_graph(4, 4, false);
+    let result = Chain::new(
+        graph,
+        vec![1_u32; 16],
+        ChainParams {
+            districts: 2,
+            seed: 42,
+            pop_tolerance: 0.25,
+            county_surcharge: 51,
+            tree_attempts: 2,
+            frozen_districts: Vec::new(),
+        },
+        Some(row_stripes(4, 4, 2)),
+    );
+    assert!(result.is_err());
 }

@@ -35,8 +35,9 @@ struct Arguments {
     tolerance: f64,
     #[arg(long)]
     seed: u64,
+    /// Bounded 0–50 preference shared by county-aware proposals and optimized selection.
     #[arg(long, default_value_t = 0)]
-    county_surcharge: u64,
+    county_surcharge: u32,
     #[arg(long, default_value_t = 10)]
     tree_attempts: u32,
 }

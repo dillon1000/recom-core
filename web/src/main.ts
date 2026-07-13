@@ -72,7 +72,7 @@ app.innerHTML = `
           <label class="field"><span>Tree attempts</span><input id="attempts" type="number" min="1" max="20" /></label>
         </div>
         <label class="range-field"><span><span>Population tolerance</span><output id="tolerance-output">5.0%</output></span><input id="tolerance" type="range" min="0.5" max="15" step="0.5" /></label>
-        <label class="range-field"><span><span>County preservation</span><output id="county-output">10</output></span><input id="county" type="range" min="0" max="50" step="1" /></label>
+        <label class="range-field"><span><span>County preservation</span><output id="county-output">10</output></span><input id="county" type="range" min="0" max="50" step="1" /><small>Biases proposals toward county boundaries and weights county fragments when Optimize selects a plan.</small></label>
       </section>
 
       <section class="viewer-section" aria-labelledby="generation-heading">

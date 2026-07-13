@@ -152,6 +152,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .range-field > span { display: flex; justify-content: space-between; }
 .range-field output { color: var(--ink); }
 .range-field input { width: 100%; accent-color: var(--ink); }
+.range-field small { color: var(--muted); font-size: 11px; line-height: 1.4; }
 
 .metric-grid { display: grid; border: 1px solid var(--border); }
 .metric-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
