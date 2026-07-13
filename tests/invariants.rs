@@ -97,6 +97,8 @@ fn run_minimal_relabeling_case(
             tree_attempts: 8,
             burst_length: 0,
             frozen_districts: Vec::new(),
+            variant: Default::default(),
+            balance_ub: 0,
         },
         Some(initial.clone()),
     )
@@ -151,6 +153,8 @@ fn run_invariant_case(
             tree_attempts: 8,
             burst_length,
             frozen_districts: Vec::new(),
+            variant: Default::default(),
+            balance_ub: 0,
         },
         Some(initial.clone()),
     )
@@ -202,6 +206,8 @@ fn frontier_entries_are_nondominated_and_rescore_exactly() {
             tree_attempts: 8,
             burst_length: 0,
             frozen_districts: Vec::new(),
+            variant: Default::default(),
+            balance_ub: 0,
         },
         Some(initial),
     )
@@ -313,6 +319,8 @@ fn county_preservation_changes_generation_and_optimized_selection() {
                 tree_attempts: 8,
                 burst_length: 0,
                 frozen_districts: Vec::new(),
+                variant: Default::default(),
+                balance_ub: 0,
             },
             Some(initial.clone()),
         )
@@ -341,6 +349,8 @@ fn county_preservation_rejects_values_above_the_public_range() {
             tree_attempts: 2,
             burst_length: 0,
             frozen_districts: Vec::new(),
+            variant: Default::default(),
+            balance_ub: 0,
         },
         Some(row_stripes(4, 4, 2)),
     );
@@ -360,6 +370,8 @@ fn burst_trace_reconstructs_every_state_change() {
         tree_attempts: 8,
         burst_length: 10,
         frozen_districts: Vec::new(),
+        variant: Default::default(),
+        balance_ub: 0,
     };
     let mut traced = Chain::new(
         graph.clone(),

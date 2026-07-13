@@ -47,6 +47,8 @@ fn run_chain(burst_length: u32) -> Vec<u16> {
             tree_attempts: 12,
             burst_length,
             frozen_districts: Vec::new(),
+            variant: Default::default(),
+            balance_ub: 0,
         },
         Some(initial),
     )

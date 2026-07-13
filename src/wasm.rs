@@ -92,6 +92,8 @@ impl Chain {
                 tree_attempts: raw.tree_attempts,
                 burst_length: raw.burst_length.unwrap_or_default(),
                 frozen_districts,
+                variant: Default::default(),
+                balance_ub: 0,
             },
             initial_assignment,
         )

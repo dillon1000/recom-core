@@ -75,6 +75,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tree_attempts: arguments.tree_attempts,
             burst_length: 0,
             frozen_districts: Vec::new(),
+            variant: Default::default(),
+            balance_ub: 0,
         },
         Some(assignment),
     )?;

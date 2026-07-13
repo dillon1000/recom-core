@@ -22,6 +22,8 @@ fn rebalance_reduces_maximum_population_deviation() {
             tree_attempts: 4,
             burst_length: 0,
             frozen_districts: Vec::new(),
+            variant: Default::default(),
+            balance_ub: 0,
         },
         Some(vec![0, 0, 0, 1]),
     )
@@ -49,6 +51,8 @@ fn rebalance_keeps_frozen_district_unchanged() {
             tree_attempts: 4,
             burst_length: 0,
             frozen_districts: vec![0],
+            variant: Default::default(),
+            balance_ub: 0,
         },
         Some(vec![0, 0, 0, 1]),
     )

@@ -22,6 +22,8 @@ fn seed_and_grow_builds_a_legal_balanced_plan() {
             tree_attempts: 10,
             burst_length: 0,
             frozen_districts: Vec::new(),
+            variant: Default::default(),
+            balance_ub: 0,
         },
         None,
     )
@@ -49,6 +51,8 @@ fn chain_rejects_zero_population_targets() {
             tree_attempts: 1,
             burst_length: 0,
             frozen_districts: Vec::new(),
+            variant: Default::default(),
+            balance_ub: 0,
         },
         Some(vec![0, 0, 1, 1]),
     );
