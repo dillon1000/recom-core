@@ -4,6 +4,8 @@
 
 mod common;
 
+use std::collections::BTreeSet;
+
 use proptest::prelude::*;
 use recom_core::{Chain, ChainParams, CsrGraph, Partition, PopulationBounds, ProposalOutcome};
 
@@ -53,6 +55,75 @@ proptest! {
             add_diagonals,
             burst_length,
         );
+    }
+
+    #[test]
+    fn accepted_steps_minimize_relabeling(
+        width in 3_usize..7,
+        rows_per_district in 2_usize..5,
+        districts in 2_u16..5,
+        seed in any::<u64>(),
+        add_diagonals in any::<bool>(),
+    ) {
+        run_minimal_relabeling_case(
+            width,
+            rows_per_district,
+            districts,
+            seed,
+            add_diagonals,
+        );
+    }
+}
+
+fn run_minimal_relabeling_case(
+    width: usize,
+    rows_per_district: usize,
+    districts: u16,
+    seed: u64,
+    add_diagonals: bool,
+) {
+    let height = rows_per_district * districts as usize;
+    let graph = grid_graph(width, height, add_diagonals);
+    let populations = vec![1_u32; graph.node_count()];
+    let initial = row_stripes(width, height, districts);
+    let mut chain = Chain::new(
+        graph,
+        populations,
+        ChainParams {
+            districts,
+            seed,
+            pop_tolerance: 0.25,
+            county_surcharge: 10,
+            tree_attempts: 8,
+            burst_length: 0,
+            frozen_districts: Vec::new(),
+        },
+        Some(initial.clone()),
+    )
+    .expect("balanced stripe partition is valid");
+    let mut replayed = initial;
+    for _ in 0..60 {
+        let batch = chain.step_traced(1);
+        for event in batch.proposals {
+            let start = event.change_start as usize;
+            let end = start + event.change_count as usize;
+            let mut involved_districts = BTreeSet::new();
+            for index in start..end {
+                let node = batch.changed_nodes[index] as usize;
+                involved_districts.insert(replayed[node]);
+                involved_districts.insert(batch.changed_districts[index]);
+                replayed[node] = batch.changed_districts[index];
+            }
+            if event.outcome == ProposalOutcome::Accepted && event.change_count > 0 {
+                assert_eq!(involved_districts.len(), 2);
+                let merged_size = replayed
+                    .iter()
+                    .filter(|district| involved_districts.contains(district))
+                    .count();
+                assert!(2 * event.change_count as usize <= merged_size);
+            }
+        }
+        assert_eq!(replayed, chain.assignment());
     }
 }
 

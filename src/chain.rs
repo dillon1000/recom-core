@@ -333,6 +333,7 @@ impl Chain {
             let Some(proposal) = choose_balanced_cut(
                 &tree,
                 &self.populations,
+                self.partition.assignment(),
                 self.bounds,
                 district_a,
                 district_b,

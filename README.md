@@ -1,6 +1,6 @@
 # ReCom core
 
-`recom-core` is the deterministic Rust implementation behind Resigned's automatic redistricting. It accepts a population-weighted adjacency graph in compressed sparse row form, creates or validates a contiguous seed partition, and advances a ReCom chain while preserving contiguity and the configured population tolerance.
+`recom-core` is the deterministic Rust implementation behind [Dillon's Redistricting's](https://dillonr.ing/redistricting) automatic redistricting. It accepts a population-weighted adjacency graph in compressed sparse row form, creates or validates a contiguous seed partition, and advances a ReCom chain while preserving contiguity and the configured population tolerance.
 
 The root crate is compiled natively for invariant and oracle tests and to `wasm32-unknown-unknown` for the browser worker. Proposal randomness uses a pinned `ChaCha8Rng`; spanning trees use integer random edge keys; population comparisons use integer fixed-point bounds. A seed, graph, assignment, and parameter set therefore produce the same assignments in native and WASM builds. The public generator returns the final seeded chain sample; Pareto optimization remains separately available through `best_assignment` and the frontier APIs without collapsing distinct seeds back to a strong reference plan.
 
@@ -72,6 +72,10 @@ The generated `wasm-bindgen --target web` package is written to the ignored `web
 
 ## Algorithm attribution
 
-The balanced-tree-cut proposal structure follows the approach used by [`pjrule/frcw.rs`](https://github.com/pjrule/frcw.rs), distributed under the MIT License, and the broader ReCom algorithm described by the MGGG Redistricting Lab. Short-burst optimization follows Cannon et al., [*Voting Rights, Markov Chains, and Optimization by Short Bursts*](https://doi.org/10.1007/s11009-023-09994-1), adapted here to restart from the persistent weighted Pareto archive. This implementation is independent because it adds reproducible integer edge priorities, region-aware county surcharges, frozen districts, seed generation, a finishing rebalance pass, and a WASM-safe chunked API.
+The balanced-tree-cut proposal structure follows the approach used by [`pjrule/frcw.rs`](https://github.com/pjrule/frcw.rs), distributed under the MIT License, and the broader ReCom algorithm described by the MGGG Redistricting Lab. Short-burst optimization follows Cannon et al., [*Voting Rights, Markov Chains, and Optimization by Short Bursts*](https://doi.org/10.1007/s11009-023-09994-1), adapted here to restart from the persistent weighted Pareto archive. This implementation is independent because it adds reproducible integer edge priorities, minimal relabeling, region-aware county surcharges, frozen districts, seed generation, a finishing rebalance pass, and a WASM-safe chunked API.
 
 The `oracle` feature enables the native GerryChain graph runner used for distributional comparisons. See the [pinned oracle procedure and latest results](https://github.com/dillon1000/recom-core/blob/main/oracle/README.md).
+
+# Notices
+- When developing, AI tools such as OpenAI's Codex and Anthropic's Claude Code were used to generate partial or whole files or functions in this codebase. While I believe I have done my due dilligence reviewing the changes proposed, there may be some things that have slipped through the cracks. Please be sure to verify any outputs that you may receive. 
+- The app is not an official election system, government system, legal service, compliance service, or source of certified election results. District, demographic, geographic, contiguity, compactness, and election-related outputs may be incomplete, stale, inaccurate, or unsuitable for legal compliance. You should independently verify any output before relying on it.

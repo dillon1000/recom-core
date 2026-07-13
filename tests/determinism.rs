@@ -17,7 +17,7 @@ fn fixed_seed_matches_golden_assignment_hash() {
     let hash = assignment_hash(&first);
     assert_eq!(
         hash,
-        "0c8de06eface48e3f7f8556ab58ebcd0ef9e8d2a0037523cf8a0677d593f5c8c"
+        "3996a810276a54e6cb0c55ff75f31ba1b080e5bc964d751a7eb47f851bedf9fd"
     );
 }
 
@@ -29,7 +29,7 @@ fn short_bursts_match_golden_assignment_hash() {
     let hash = assignment_hash(&first);
     assert_eq!(
         hash,
-        "0935aef3ef125ee7abd6dc761655a68e74ebf40099166b682d759af2f688ae74"
+        "f58c25095f16c1d314883508b57c3fefe80b1522d5fb2fe08f172e8a343a2dca"
     );
 }
 
