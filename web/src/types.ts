@@ -32,7 +32,27 @@ export type Unit = {
 }
 
 export type UnitAdjacency = Record<string, string[]>
+export type UnitAdjacencyWeights = Record<string, number[]>
 export type AssignmentMap = Record<string, number>
+
+export type BaselineMetric = {
+  count: number
+  mean: number
+  percentiles: Record<string, number>
+  histogram: Array<{ min: number; max: number; count: number }>
+}
+
+export type EnsembleBaseline = {
+  meta: {
+    seeds: number[]
+    steps: number
+    tolerance: number
+    burnIn: number
+    thinning: number
+    coreVersion: string
+  }
+  metrics: Record<string, BaselineMetric>
+}
 
 export type ManifestLayer = {
   sourceLayer: string
@@ -59,6 +79,8 @@ export type Manifest = {
   files: {
     unitStats: string
     unitAdjacency: string
+    unitAdjacencyWeights?: string
+    ensembleBaseline?: string
     defaultAssignments: string
   }
   tiles: {
@@ -75,23 +97,32 @@ export type Manifest = {
 
 export type StateBundle = {
   adjacency: UnitAdjacency
+  adjacencyWeights?: UnitAdjacencyWeights
+  baseline?: EnsembleBaseline
   initialAssignment?: Uint16Array
   manifest: Manifest
   units: Unit[]
   virtualEdges: number
 }
 
-export type PlanScore = { countySplits: number; cutEdges: number }
+export type PlanScore = {
+  weightedCut: number
+  countyFragments: number
+  countySplits: number
+  maxDeviationPpm: number
+}
 
 export type ChainStatus = {
   stepsAccepted: number
   stepsRejected: number
   currentScore: PlanScore
   bestScore: PlanScore
+  frontierSize: number
 }
 
 export type GraphInput = {
   edgeCountyCross: Uint8Array
+  edgeWeights?: Uint32Array
   neighbors: Uint32Array
   offsets: Uint32Array
   populations: Uint32Array
@@ -113,6 +144,7 @@ export type WorkerRequest = {
   requestId: number
   graph: {
     edgeCountyCross: ArrayBuffer
+    edgeWeights?: ArrayBuffer
     neighbors: ArrayBuffer
     offsets: ArrayBuffer
     populations: ArrayBuffer
@@ -125,5 +157,12 @@ export type WorkerRequest = {
 export type WorkerResponse =
   | { type: "ready"; requestId: 0 }
   | { type: "progress"; requestId: number; completed: number; status: ChainStatus }
-  | { type: "complete"; requestId: number; assignment: Uint16Array; status: ChainStatus }
+  | {
+      type: "complete"
+      requestId: number
+      assignment: Uint16Array
+      bestAssignment: Uint16Array
+      frontier: PlanScore[]
+      status: ChainStatus
+    }
   | { type: "error"; requestId: number; error: string }

@@ -33,6 +33,7 @@ impl Chain {
         offsets: &[u32],
         neighbors: &[u32],
         edge_county_cross: &[u8],
+        edge_weights: JsValue,
         populations: &[u32],
         params: JsValue,
     ) -> Result<Chain, JsError> {
@@ -62,11 +63,20 @@ impl Chain {
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()?;
+        let edge_weights = if edge_weights.is_null() || edge_weights.is_undefined() {
+            None
+        } else if edge_weights.is_instance_of::<js_sys::Uint32Array>() {
+            Some(js_sys::Uint32Array::from(edge_weights).to_vec())
+        } else {
+            return Err(JsError::new(
+                "edge weights must be a Uint32Array, null, or undefined",
+            ));
+        };
         let graph = CsrGraph::new(
             offsets.to_vec(),
             neighbors.to_vec(),
             edge_county_cross.to_vec(),
-            None,
+            edge_weights,
         )
         .map_err(js_error)?;
         let inner = CoreChain::new(
@@ -104,6 +114,26 @@ impl Chain {
 
     pub fn best_assignment(&self) -> Vec<u16> {
         one_based_assignment(self.inner.best_assignment())
+    }
+
+    pub fn frontier(&self) -> Result<JsValue, JsError> {
+        let scores = self
+            .inner
+            .frontier()
+            .iter()
+            .map(|entry| entry.score)
+            .collect::<Vec<_>>();
+        serde_wasm_bindgen::to_value(&scores)
+            .map_err(|error| JsError::new(&format!("could not serialize frontier: {error}")))
+    }
+
+    pub fn frontier_assignment(&self, index: usize) -> Result<Vec<u16>, JsError> {
+        let assignment = self
+            .inner
+            .frontier()
+            .get(index)
+            .ok_or_else(|| JsError::new("frontier assignment index is out of range"))?;
+        Ok(one_based_assignment(&assignment.assignment))
     }
 }
 

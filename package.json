@@ -7,8 +7,10 @@
     "wasm:build": "wasm-pack build . --target web --release --no-pack --out-dir web/src/wasm --out-name recom_core",
     "dev": "pnpm wasm:build && vite --config vite.config.ts",
     "build": "pnpm wasm:build && tsc -b && vite build --config vite.config.ts",
-    "test": "vitest run",
-    "check": "cargo test && pnpm test && pnpm build"
+    "typecheck": "tsc -b",
+    "lint": "eslint web/src vite.config.ts",
+    "test": "pnpm wasm:build && vitest run",
+    "check": "cargo test --workspace --all-features && cargo clippy --workspace --all-targets --all-features -- -D warnings && pnpm typecheck && pnpm lint && pnpm test && pnpm build"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.9",
@@ -18,7 +20,11 @@
     "pmtiles": "^4.4.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.7.0",
+    "globals": "^17.7.0",
     "typescript": "~6.0.2",
+    "typescript-eslint": "^8.63.0",
     "vite": "^8.0.12",
     "vitest": "^4.1.6"
   }

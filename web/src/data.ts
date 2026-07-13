@@ -4,10 +4,11 @@
  * previous worker immediately so large-state parsing never races the UI.
  */
 import DataWorker from "./data.worker?worker"
-import type { GraphInput, Manifest, Unit } from "./types"
+import type { EnsembleBaseline, GraphInput, Manifest, Unit } from "./types"
 
 export type LoadedState = {
   graph: GraphInput
+  baseline?: EnsembleBaseline
   initialAssignment: Uint16Array
   manifest: Manifest
   units: Unit[]

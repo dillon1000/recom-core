@@ -30,6 +30,7 @@ async function run(request: WorkerRequest) {
       new Uint32Array(graph.offsets),
       new Uint32Array(graph.neighbors),
       new Uint8Array(graph.edgeCountyCross),
+      graph.edgeWeights ? new Uint32Array(graph.edgeWeights) : null,
       new Uint32Array(graph.populations),
       {
         ...params,
@@ -52,13 +53,17 @@ async function run(request: WorkerRequest) {
     // best assignment remains available for a future explicit optimization
     // mode instead of pinning random seeds to a strong reference plan.
     const assignment = chain.assignment()
+    const bestAssignment = chain.best_assignment()
+    const frontier = chain.frontier() as ChainStatus["currentScore"][]
     const response: WorkerResponse = {
       type: "complete",
       requestId: request.requestId,
       assignment,
+      bestAssignment,
+      frontier,
       status,
     }
-    self.postMessage(response, { transfer: [assignment.buffer] })
+    self.postMessage(response, { transfer: [assignment.buffer, bestAssignment.buffer] })
   } catch (error) {
     post({ type: "error", requestId: request.requestId, error: message(error) })
   } finally {

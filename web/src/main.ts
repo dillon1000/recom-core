@@ -23,6 +23,7 @@ import ReComWorker from "./recom.worker?worker"
 import type {
   AssignmentMap,
   ChainStatus,
+  PlanScore,
   ViewerResolution,
   WorkerRequest,
   WorkerResponse,
@@ -75,7 +76,7 @@ app.innerHTML = `
         <div class="metric-grid metric-grid--two" id="score-grid" hidden>
           <div class="metric"><span>Accepted</span><strong id="accepted-value">0</strong></div>
           <div class="metric"><span>Rejected</span><strong id="rejected-value">0</strong></div>
-          <div class="metric"><span>Plan cut edges</span><strong id="cut-value">0</strong></div>
+          <div class="metric"><span>Weighted cut</span><strong id="cut-value">0</strong></div>
           <div class="metric"><span>County splits</span><strong id="splits-value">0</strong></div>
         </div>
         <p class="note" id="generation-note">ReCom starts from the published reference assignment, then advances the seeded proposal chain entirely inside a Web Worker.</p>
@@ -162,6 +163,8 @@ let loaded: LoadedState | null = null
 let viewerMap: ViewerMap | null = null
 let recomWorker: Worker | null = null
 let assignment: AssignmentMap | null = null
+let bestAssignment: AssignmentMap | null = null
+let frontierScores: PlanScore[] = []
 let lastStatus: ChainStatus | null = null
 let analytics: PlanAnalytics | null = null
 let unitLookup = new Map<string, LoadedState["units"][number]>()
@@ -214,6 +217,8 @@ async function loadSelectedState() {
   cancelGeneration()
   loaded = null
   assignment = null
+  bestAssignment = null
+  frontierScores = []
   lastStatus = null
   analytics = null
   unitLookup = new Map()
@@ -316,6 +321,8 @@ async function generate() {
     }
     lastStatus = response.status
     assignment = denseToAssignment(loaded?.graph.unitIds ?? [], response.assignment)
+    bestAssignment = denseToAssignment(loaded?.graph.unitIds ?? [], response.bestAssignment)
+    frontierScores = response.frontier
     finishPlan(params.seed)
   }
   worker.onerror = (event) => {
@@ -332,6 +339,7 @@ async function generate() {
     requestId: currentRequest,
     graph: {
       edgeCountyCross: graph.edgeCountyCross.slice().buffer,
+      ...(graph.edgeWeights ? { edgeWeights: graph.edgeWeights.slice().buffer } : {}),
       neighbors: graph.neighbors.slice().buffer,
       offsets: graph.offsets.slice().buffer,
       populations: graph.populations.slice().buffer,
@@ -352,6 +360,7 @@ async function generate() {
     request.graph.offsets,
     request.graph.populations,
   ]
+  if (request.graph.edgeWeights) transfers.push(request.graph.edgeWeights)
   if (request.params.initialAssignment) transfers.push(request.params.initialAssignment)
   worker.postMessage(request, transfers)
 }
@@ -399,7 +408,7 @@ function renderScore(status: ChainStatus) {
   elements.scoreGrid.hidden = false
   elements.accepted.textContent = status.stepsAccepted.toLocaleString()
   elements.rejected.textContent = status.stepsRejected.toLocaleString()
-  elements.cut.textContent = status.currentScore.cutEdges.toLocaleString()
+  elements.cut.textContent = status.currentScore.weightedCut.toLocaleString()
   elements.splits.textContent = status.currentScore.countySplits.toLocaleString()
 }
 
@@ -477,6 +486,10 @@ function downloadAssignment() {
     status: lastStatus,
     analytics,
     assignment,
+    optimization: {
+      bestAssignment,
+      frontierScores,
+    },
   }
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }))
   const anchor = document.createElement("a")
@@ -539,13 +552,13 @@ function overviewAnalytics(data: PlanAnalytics) {
       ["Max deviation", formatPercent(data.maxDeviationPercent / 100)],
       ["Mean abs. deviation", formatPercent(data.meanAbsoluteDeviationPercent / 100)],
       ["Accepted proposals", formatPercent(data.acceptanceRate)],
-      ["Cut edges / district", data.cutEdgesPerDistrict.toFixed(1)],
+      ["Weighted cut / district", data.weightedCutPerDistrict.toFixed(1)],
       ["Split counties", `${data.counties.splitCount} / ${data.counties.total}`],
       ["Competitive seats", String(data.election.competitiveDistricts)],
     ])}</section>
     <section><h3><span>02</span> Population balance</h3>${deviationChart(data.districts, true)}</section>
     <section class="analytics-columns"><div><h3><span>03</span> Statewide demographics</h3>${shareBars(data)}</div><div><h3><span>04</span> Electoral profile</h3>${electionSummary(data)}</div></section>
-    ${methodology("Population uses published unit totals. County splits and demographics are recomputed from the generated assignment; cut edges and acceptance come from recom-core.")}
+    ${methodology("Population uses published unit totals. County splits and demographics are recomputed from the generated assignment; weighted cut and acceptance come from recom-core.")}
   `
 }
 
@@ -707,7 +720,8 @@ function randomSeed() {
 }
 
 function emptyStatus(): ChainStatus {
-  return { stepsAccepted: 0, stepsRejected: 0, currentScore: { cutEdges: 0, countySplits: 0 }, bestScore: { cutEdges: 0, countySplits: 0 } }
+  const score = { weightedCut: 0, countyFragments: 0, countySplits: 0, maxDeviationPpm: 0 }
+  return { stepsAccepted: 0, stepsRejected: 0, currentScore: score, bestScore: score, frontierSize: 1 }
 }
 
 function boundedInteger(value: string, minimum: number, maximum: number) {
