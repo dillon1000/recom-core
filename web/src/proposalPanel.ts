@@ -4,6 +4,21 @@
  * selection, filters, persistent bookmarks, two-plan comparison, sharing, branch assignments, and
  * the responsive map-first chain workbench used to operate those states.
  */
+import { ScatterChart, type ScatterSeriesOption } from "echarts/charts"
+import type { EChartsOption } from "echarts"
+import {
+  AriaComponent,
+  DataZoomComponent,
+  GridComponent,
+  TooltipComponent,
+} from "echarts/components"
+import {
+  init,
+  use,
+  type EChartsType,
+} from "echarts/core"
+import { CanvasRenderer } from "echarts/renderers"
+
 import {
   assignmentAtProposal,
   compareProposals,
@@ -15,6 +30,20 @@ import {
   type ProposalUnitVote,
 } from "./proposalExplorer"
 import type { PlanScore, ProposalTrace, ProposalTraceChunk } from "./types"
+
+use([AriaComponent, CanvasRenderer, DataZoomComponent, GridComponent, ScatterChart, TooltipComponent])
+
+const playbackDelayMS = 180
+const scoreCloudColors = {
+  accent: "#3f5870",
+  border: "#ddd7cd",
+  borderStrong: "#c9c2b8",
+  card: "#fdfbf7",
+  faint: "#8a847b",
+  frontier: "#a35216",
+  frontierBorder: "#7c3a0e",
+  ink: "#282522",
+}
 
 export type ProposalPanelData = {
   chunks: ProposalTraceChunk[]
@@ -64,6 +93,8 @@ export class ProposalPanel {
   private compareProposal: number | null = null
   private bookmarks: number[] = []
   private playback: number | null = null
+  private playbackSpeed = 1
+  private scoreCloud: EChartsType | null = null
 
   constructor(private readonly callbacks: ProposalPanelCallbacks) {
     const root = document.createElement("aside")
@@ -151,9 +182,14 @@ export class ProposalPanel {
         this.render()
       })
     }
-    const canvas = this.element<HTMLCanvasElement>("[data-score-cloud]")
-    canvas.addEventListener("pointerdown", (event) => this.selectCloudPoint(event))
-    new ResizeObserver(() => this.drawCloud()).observe(canvas)
+    this.element<HTMLSelectElement>("[data-playback-speed]").addEventListener("change", (event) => {
+      const speed = Number((event.target as HTMLSelectElement).value)
+      if (!Number.isFinite(speed) || speed <= 0) return
+      this.playbackSpeed = speed
+      if (this.playback !== null) this.startPlayback()
+    })
+    const cloud = this.element("[data-score-cloud]")
+    new ResizeObserver(() => this.scoreCloud?.resize()).observe(cloud)
   }
 
   private select(proposal: number) {
@@ -265,68 +301,101 @@ export class ProposalPanel {
   }
 
   private drawCloud() {
-    const canvas = this.element<HTMLCanvasElement>("[data-score-cloud]")
     const events = this.visible().filter((event) => event.outcome === "accepted")
-    const width = Math.max(280, canvas.clientWidth)
-    const height = Math.max(180, canvas.clientHeight)
-    const ratio = devicePixelRatio || 1
-    canvas.width = Math.round(width * ratio)
-    canvas.height = Math.round(height * ratio)
-    const context = canvas.getContext("2d")
-    if (!context) return
-    context.scale(ratio, ratio)
-    const styles = getComputedStyle(this.root)
-    const color = (token: string, fallback: string) => styles.getPropertyValue(token).trim() || fallback
-    context.fillStyle = color("--card", "#fdfbf7")
-    context.fillRect(0, 0, width, height)
-    context.strokeStyle = color("--border", "#ddd7cd")
-    context.beginPath()
-    context.moveTo(34, 12)
-    context.lineTo(34, height - 26)
-    context.lineTo(width - 10, height - 26)
-    context.stroke()
-    const bounds = scoreBounds(events)
-    for (const event of events) {
-      const point = plotPoint(event, bounds, width, height)
-      const selected = event.proposal === this.selectedProposal
-      const compared = event.proposal === this.compareProposal
-      context.beginPath()
-      context.arc(point.x, point.y, selected || compared ? 5 : event.frontierRetained ? 3.5 : 2, 0, Math.PI * 2)
-      context.globalAlpha = selected || compared ? 1 : event.frontierRetained ? 0.9 : 0.48
-      context.fillStyle = selected
-        ? color("--ink", "#282522")
-        : compared
-          ? color("--card", "#fdfbf7")
-          : event.frontierRetained
-            ? "#a35216"
-            : color("--accent", "#3f5870")
-      context.fill()
-      context.globalAlpha = 1
-      if (compared || event.frontierRetained) {
-        context.strokeStyle = compared ? color("--ink", "#282522") : "#7c3a0e"
-        context.stroke()
-      }
+    const groups = {
+      accepted: events.filter((event) => !event.frontierRetained && event.proposal !== this.selectedProposal && event.proposal !== this.compareProposal),
+      frontier: events.filter((event) => event.frontierRetained && event.proposal !== this.selectedProposal && event.proposal !== this.compareProposal),
+      compared: events.filter((event) => event.proposal === this.compareProposal && event.proposal !== this.selectedProposal),
+      selected: events.filter((event) => event.proposal === this.selectedProposal),
     }
-    context.fillStyle = color("--faint", "#8a847b")
-    context.font = '8px "Geist Mono Variable", monospace'
-    context.fillText("COUNTY FRAGMENTS", 38, 10)
-    context.textAlign = "right"
-    context.fillText("WEIGHTED CUT", width - 10, height - 8)
-    context.textAlign = "left"
+    const option: EChartsOption = {
+      animationDuration: 180,
+      animationDurationUpdate: 120,
+      aria: {
+        enabled: true,
+        decal: { show: false },
+        description: "Accepted proposal scores by weighted cut and county fragments.",
+      },
+      dataZoom: [
+        { type: "inside", xAxisIndex: 0, filterMode: "none" },
+        { type: "inside", yAxisIndex: 0, filterMode: "none" },
+      ],
+      grid: { top: 15, right: 12, bottom: 30, left: 43, containLabel: false },
+      series: [
+        scoreCloudSeries("Accepted", groups.accepted, {
+          color: scoreCloudColors.accent,
+          opacity: 0.5,
+        }, 5),
+        scoreCloudSeries("Frontier", groups.frontier, {
+          borderColor: scoreCloudColors.frontierBorder,
+          borderWidth: 1,
+          color: scoreCloudColors.frontier,
+          opacity: 0.9,
+        }, 7),
+        scoreCloudSeries("Compared", groups.compared, {
+          borderColor: scoreCloudColors.ink,
+          borderWidth: 1.5,
+          color: scoreCloudColors.card,
+          opacity: 1,
+        }, 10),
+        scoreCloudSeries("Selected", groups.selected, {
+          borderColor: scoreCloudColors.card,
+          borderWidth: 1.5,
+          color: scoreCloudColors.ink,
+          opacity: 1,
+        }, 11),
+      ],
+      tooltip: {
+        appendToBody: true,
+        backgroundColor: scoreCloudColors.ink,
+        borderWidth: 0,
+        confine: true,
+        extraCssText: "border-radius:3px;box-shadow:0 8px 24px rgb(45 38 28 / 18%);",
+        formatter: scoreCloudTooltip,
+        padding: [7, 9],
+        textStyle: {
+          color: scoreCloudColors.card,
+          fontFamily: '"Geist Mono Variable", monospace',
+          fontSize: 10,
+          lineHeight: 16,
+        },
+        trigger: "item",
+      },
+      xAxis: {
+        axisLabel: { color: scoreCloudColors.faint, fontFamily: '"Geist Mono Variable", monospace', fontSize: 8 },
+        axisLine: { lineStyle: { color: scoreCloudColors.borderStrong } },
+        axisTick: { show: false },
+        name: "WEIGHTED CUT",
+        nameGap: 18,
+        nameLocation: "middle",
+        nameTextStyle: { color: scoreCloudColors.faint, fontFamily: '"Geist Mono Variable", monospace', fontSize: 8 },
+        scale: true,
+        splitLine: { show: false },
+        type: "value",
+      },
+      yAxis: {
+        axisLabel: { color: scoreCloudColors.faint, fontFamily: '"Geist Mono Variable", monospace', fontSize: 8 },
+        axisLine: { lineStyle: { color: scoreCloudColors.borderStrong } },
+        axisTick: { show: false },
+        name: "FRAGMENTS",
+        nameGap: 8,
+        nameTextStyle: { color: scoreCloudColors.faint, fontFamily: '"Geist Mono Variable", monospace', fontSize: 8 },
+        scale: true,
+        splitLine: { lineStyle: { color: scoreCloudColors.border, opacity: 0.6 } },
+        type: "value",
+      },
+    }
+    this.ensureScoreCloud().setOption(option, { lazyUpdate: true, notMerge: true })
   }
 
-  private selectCloudPoint(pointer: PointerEvent) {
-    const canvas = this.element<HTMLCanvasElement>("[data-score-cloud]")
-    const events = this.visible().filter((event) => event.outcome === "accepted")
-    const rect = canvas.getBoundingClientRect()
-    const bounds = scoreBounds(events)
-    let closest: { distance: number; proposal: number } | null = null
-    for (const event of events) {
-      const point = plotPoint(event, bounds, rect.width, rect.height)
-      const distance = Math.hypot(point.x - (pointer.clientX - rect.left), point.y - (pointer.clientY - rect.top))
-      if (!closest || distance < closest.distance) closest = { distance, proposal: event.proposal }
-    }
-    if (closest && closest.distance <= 14) this.select(closest.proposal)
+  private ensureScoreCloud() {
+    if (this.scoreCloud) return this.scoreCloud
+    this.scoreCloud = init(this.element("[data-score-cloud]"), undefined, { renderer: "canvas" })
+    this.scoreCloud.on("click", (parameters) => {
+      const values = scoreCloudValues(parameters.value)
+      if (values) this.select(values.proposal)
+    })
+    return this.scoreCloud
   }
 
   private setCompare(proposal: number | null) {
@@ -373,12 +442,17 @@ export class ProposalPanel {
       this.stopPlayback()
       return
     }
+    this.startPlayback()
+  }
+
+  private startPlayback() {
+    if (this.playback !== null) window.clearInterval(this.playback)
     this.setActionContent('[data-action="play"]', proposalIcons.pause, "Pause")
     this.playback = window.setInterval(() => {
       const next = nearestVisibleProposal(this.visible(), this.selectedProposal, 1)
       if (next === this.selectedProposal) this.stopPlayback()
       else this.select(next)
-    }, 180)
+    }, playbackDelayMS / this.playbackSpeed)
   }
 
   private stopPlayback() {
@@ -452,21 +526,27 @@ function proposalPanelMarkup() {
           <button type="button" data-action="previous" aria-label="Previous filtered proposal">${proposalIcons.previous}</button>
           <button type="button" data-action="play">${proposalIcons.play}<span>Play</span></button>
           <button type="button" data-action="next" aria-label="Next filtered proposal">${proposalIcons.next}</button>
+          <select data-playback-speed aria-label="Playback speed" title="Playback speed">
+            <option value="0.5">0.5× speed</option>
+            <option value="1" selected>1× speed</option>
+            <option value="2">2× speed</option>
+            <option value="4">4× speed</option>
+          </select>
         </div>
         <div class="proposal-explorer__event"><span class="proposal-outcome" data-proposal-outcome></span><strong data-proposal-title></strong><small data-proposal-detail></small></div>
       </section>
-      <section class="proposal-explorer__cloud">
-        ${sectionHeading("02", "Score cloud", '<span data-visible-count></span>')}
-        <canvas data-score-cloud tabindex="0" role="img" aria-label="Accepted proposal score cloud. Horizontal position is weighted cut and vertical position is county fragments."></canvas>
-        <div class="proposal-explorer__cloud-legend"><span><i></i>Accepted</span><span><i class="frontier"></i>Frontier entry</span><span><i class="selected"></i>Selected</span></div>
-      </section>
       <section class="proposal-explorer__metrics">
-        ${sectionHeading("03", "Selected score", '<span data-score-kind></span>')}
+        ${sectionHeading("02", "Selected score", '<span data-score-kind></span>')}
         <div data-score-metrics></div>
+      </section>
+      <section class="proposal-explorer__cloud">
+        ${sectionHeading("03", "Score cloud", '<span data-visible-count></span>')}
+        <div data-score-cloud tabindex="0" role="img" aria-label="Accepted proposal score cloud. Horizontal position is weighted cut and vertical position is county fragments. Scroll to zoom and click a point to select it."></div>
+        <div class="proposal-explorer__cloud-legend"><span><i></i>Accepted</span><span><i class="frontier"></i>Frontier</span><span><i class="compared"></i>Compared</span><span><i class="selected"></i>Selected</span></div>
       </section>
       <section class="proposal-explorer__filters">
         ${sectionHeading("04", "Filters", '<button type="button" data-action="reset-filters">Reset</button>')}
-        <div><label><input data-filter="accepted" type="checkbox"> Accepted only</label><label><input data-filter="frontier" type="checkbox"> Frontier entries</label><label><span>Max county fragments</span><input data-filter="fragments" type="number" min="0" placeholder="Any"></label><label><span>Max deviation %</span><input data-filter="deviation" type="number" min="0" step="0.1" placeholder="Any"></label><label><span>Minimum D seats</span><input data-filter="min-dem" type="number" min="0" placeholder="Any"></label><label><span>Maximum D seats</span><input data-filter="max-dem" type="number" min="0" placeholder="Any"></label></div>
+        <div><label><input data-filter="accepted" type="checkbox"> Accepted only</label><label><input data-filter="frontier" type="checkbox"> Frontier only</label><label><span>Fragments ≤</span><input data-filter="fragments" type="number" min="0" placeholder="Any"></label><label><span>Deviation ≤ %</span><input data-filter="deviation" type="number" min="0" step="0.1" placeholder="Any"></label><label><span>D seats ≥</span><input data-filter="min-dem" type="number" min="0" placeholder="Any"></label><label><span>D seats ≤</span><input data-filter="max-dem" type="number" min="0" placeholder="Any"></label></div>
       </section>
       <section class="proposal-explorer__comparison" data-comparison hidden>
         ${sectionHeading("05", "Compare", '<button type="button" data-action="clear-compare">Clear</button>')}
@@ -493,24 +573,73 @@ function metricHtml(items: Array<[string, string]>) {
   return items.map(([label, value]) => "<div><span>" + label + "</span><strong>" + value + "</strong></div>").join("")
 }
 
-function scoreBounds(events: ProposalTrace[]) {
-  const bounds = { minCut: Infinity, maxCut: -Infinity, minFragments: Infinity, maxFragments: -Infinity }
-  for (const event of events) {
-    bounds.minCut = Math.min(bounds.minCut, event.score.weightedCut)
-    bounds.maxCut = Math.max(bounds.maxCut, event.score.weightedCut)
-    bounds.minFragments = Math.min(bounds.minFragments, event.score.countyFragments)
-    bounds.maxFragments = Math.max(bounds.maxFragments, event.score.countyFragments)
+function scoreCloudSeries(
+  name: string,
+  events: ProposalTrace[],
+  itemStyle: NonNullable<ScatterSeriesOption["itemStyle"]>,
+  symbolSize: number,
+): ScatterSeriesOption {
+  return {
+    type: "scatter",
+    name,
+    data: events.map((event) => ({
+      name: "Proposal " + event.proposal.toLocaleString(),
+      value: [
+        event.score.weightedCut,
+        event.score.countyFragments,
+        event.proposal,
+        event.score.maxDeviationPpm,
+        event.demSeats ?? -1,
+        event.repSeats ?? -1,
+      ],
+    })),
+    dimensions: ["weightedCut", "countyFragments", "proposal", "maxDeviationPpm", "demSeats", "repSeats"],
+    emphasis: { focus: "self", scale: 1.6 },
+    encode: { x: "weightedCut", y: "countyFragments" },
+    itemStyle,
+    symbolSize,
   }
-  return Number.isFinite(bounds.minCut)
-    ? bounds
-    : { minCut: 0, maxCut: 1, minFragments: 0, maxFragments: 1 }
 }
 
-function plotPoint(event: ProposalTrace, bounds: ReturnType<typeof scoreBounds>, width: number, height: number) {
+type ScoreCloudValues = {
+  countyFragments: number
+  demSeats: number
+  maxDeviationPpm: number
+  proposal: number
+  repSeats: number
+  weightedCut: number
+}
+
+function scoreCloudValues(value: unknown): ScoreCloudValues | null {
+  if (!Array.isArray(value) || value.length < 6) return null
+  const values = value.map(Number)
+  if (values.some((item) => !Number.isFinite(item))) return null
   return {
-    x: 34 + ((event.score.weightedCut - bounds.minCut) / Math.max(1, bounds.maxCut - bounds.minCut)) * (width - 44),
-    y: 12 + (1 - (event.score.countyFragments - bounds.minFragments) / Math.max(1, bounds.maxFragments - bounds.minFragments)) * (height - 38),
+    weightedCut: values[0] ?? 0,
+    countyFragments: values[1] ?? 0,
+    proposal: values[2] ?? 0,
+    maxDeviationPpm: values[3] ?? 0,
+    demSeats: values[4] ?? -1,
+    repSeats: values[5] ?? -1,
   }
+}
+
+function scoreCloudTooltip(parameters: unknown) {
+  const parameter = Array.isArray(parameters) ? parameters[0] : parameters
+  const values = scoreCloudValues(
+    typeof parameter === "object" && parameter !== null && "value" in parameter
+      ? parameter.value
+      : null,
+  )
+  if (!values) return "Proposal score unavailable"
+  const seats = values.demSeats < 0 || values.repSeats < 0
+    ? "—"
+    : `${values.demSeats.toLocaleString()} D · ${values.repSeats.toLocaleString()} R`
+  return `<strong>Proposal ${values.proposal.toLocaleString()}</strong><br>`
+    + `Weighted cut&nbsp;&nbsp;${values.weightedCut.toLocaleString()}<br>`
+    + `Fragments&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${values.countyFragments.toLocaleString()}<br>`
+    + `Max deviation&nbsp;&nbsp;${(values.maxDeviationPpm / 10_000).toFixed(2)}%<br>`
+    + `Seats&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${seats}`
 }
 
 function outcomeLabel(event: ProposalTrace) {
