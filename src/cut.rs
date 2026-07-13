@@ -5,11 +5,31 @@
 
 use std::collections::HashMap;
 
-use crate::{partition::PopulationBounds, rng::ChainRng, tree::SpanningTree};
+use crate::{graph::CsrGraph, partition::PopulationBounds, rng::ChainRng, tree::SpanningTree};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CutProposal {
     pub(crate) changes: Vec<(u32, u16)>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BalancedCutCandidates {
+    adjacency: Vec<Vec<usize>>,
+    parent: Vec<usize>,
+    candidates: Vec<usize>,
+}
+
+impl BalancedCutCandidates {
+    pub(crate) fn len(&self) -> usize {
+        self.candidates.len()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ReversibleCutProposal {
+    pub(crate) changes: Vec<(u32, u16)>,
+    pub(crate) n_splits: u64,
+    pub(crate) seam_length: u64,
 }
 
 pub(crate) fn choose_balanced_cut(
@@ -21,6 +41,24 @@ pub(crate) fn choose_balanced_cut(
     district_b: u16,
     rng: &mut ChainRng,
 ) -> Option<CutProposal> {
+    let candidates = balanced_cut_candidates(tree, populations, bounds)?;
+    let child_root = candidates.candidates[rng.index(candidates.len())];
+    let (changes, _) = build_cut(
+        tree,
+        assignment,
+        district_a,
+        district_b,
+        &candidates,
+        child_root,
+    );
+    Some(CutProposal { changes })
+}
+
+pub(crate) fn balanced_cut_candidates(
+    tree: &SpanningTree,
+    populations: &[u32],
+    bounds: PopulationBounds,
+) -> Option<BalancedCutCandidates> {
     let mut local_by_node = HashMap::with_capacity(tree.nodes.len());
     for (local, node) in tree.nodes.iter().enumerate() {
         local_by_node.insert(*node, local);
@@ -78,14 +116,48 @@ pub(crate) fn choose_balanced_cut(
     if candidates.is_empty() {
         return None;
     }
-    let child_root = candidates[rng.index(candidates.len())];
 
+    Some(BalancedCutCandidates {
+        adjacency,
+        parent,
+        candidates,
+    })
+}
+
+pub(crate) fn choose_reversible_cut(
+    graph: &CsrGraph,
+    tree: &SpanningTree,
+    assignment: &[u16],
+    district_a: u16,
+    district_b: u16,
+    candidates: &BalancedCutCandidates,
+    rng: &mut ChainRng,
+) -> ReversibleCutProposal {
+    let child_root = candidates.candidates[rng.index(candidates.len())];
+    let (changes, child_side) = build_cut(
+        tree, assignment, district_a, district_b, candidates, child_root,
+    );
+    ReversibleCutProposal {
+        changes,
+        n_splits: candidates.len() as u64,
+        seam_length: seam_length(graph, tree, &child_side),
+    }
+}
+
+fn build_cut(
+    tree: &SpanningTree,
+    assignment: &[u16],
+    district_a: u16,
+    district_b: u16,
+    candidates: &BalancedCutCandidates,
+    child_root: usize,
+) -> (Vec<(u32, u16)>, Vec<bool>) {
     let mut child_side = vec![false; tree.nodes.len()];
     let mut child_stack = vec![child_root];
     child_side[child_root] = true;
     while let Some(node) = child_stack.pop() {
-        for &neighbor in &adjacency[node] {
-            if neighbor != parent[node] && !child_side[neighbor] {
+        for &neighbor in &candidates.adjacency[node] {
+            if neighbor != candidates.parent[node] && !child_side[neighbor] {
                 child_side[neighbor] = true;
                 child_stack.push(neighbor);
             }
@@ -129,5 +201,28 @@ pub(crate) fn choose_balanced_cut(
             )
         })
         .collect();
-    Some(CutProposal { changes })
+    (changes, child_side)
+}
+
+fn seam_length(graph: &CsrGraph, tree: &SpanningTree, child_side: &[bool]) -> u64 {
+    let mut side_by_node = vec![None; graph.node_count()];
+    for (local, node) in tree.nodes.iter().enumerate() {
+        side_by_node[*node as usize] = Some(child_side[local]);
+    }
+    tree.nodes
+        .iter()
+        .enumerate()
+        .filter(|(local, _)| child_side[*local])
+        .map(|(_, node)| {
+            graph
+                .incident_edges(*node as usize)
+                .iter()
+                .filter(|edge_index| {
+                    let edge = graph.edges()[**edge_index as usize];
+                    let neighbor = if edge.a == *node { edge.b } else { edge.a };
+                    side_by_node[neighbor as usize] == Some(false)
+                })
+                .count() as u64
+        })
+        .sum()
 }
