@@ -240,6 +240,32 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   backdrop-filter: blur(8px);
 }
 
+.map-color-control {
+  position: absolute;
+  z-index: 3;
+  top: 74px;
+  left: 16px;
+  display: grid;
+  width: 190px;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid rgb(23 23 23 / 18%);
+  border-radius: 3px;
+  background: rgb(255 253 248 / 92%);
+  box-shadow: 0 5px 18px rgb(36 30 22 / 8%);
+  backdrop-filter: blur(8px);
+}
+
+.map-color-control > span { color: var(--muted); font: 650 8px/1 "Geist Mono Variable", monospace; letter-spacing: .07em; text-transform: uppercase; }
+.map-color-control > div[role="group"] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.map-color-control button { min-height: 30px; border: 1px solid var(--border); border-radius: 2px 0 0 2px; background: white; font: 650 8px/1 "Geist Mono Variable", monospace; letter-spacing: .04em; text-transform: uppercase; }
+.map-color-control button + button { border-left: 0; border-radius: 0 2px 2px 0; }
+.map-color-control button[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: var(--panel); }
+.map-color-control button:focus-visible { position: relative; z-index: 1; outline: 2px solid color-mix(in oklch, var(--accent) 24%, transparent); outline-offset: 1px; }
+.partisan-legend { display: grid; gap: 4px; }
+.partisan-legend > i { height: 7px; border: 1px solid rgb(23 23 23 / 14%); background: linear-gradient(90deg, #b91c1c, #dc766d 25%, #e8e2d8 50%, #7d9ad3 75%, #1d4ed8); }
+.partisan-legend > div { display: flex; justify-content: space-between; color: var(--muted); font: 7px/1 "Geist Mono Variable", monospace; text-transform: uppercase; }
+
 .map-label strong { font-size: 12px; font-weight: 650; }
 .map-label span { color: #6f6a62; font-family: "Geist Mono Variable", monospace; font-size: 9px; letter-spacing: 0.055em; text-transform: uppercase; }
 .maplibregl-ctrl-group { border: 1px solid rgb(23 23 23 / 18%) !important; border-radius: 3px !important; box-shadow: 0 4px 15px rgb(36 30 22 / 8%) !important; }
@@ -373,7 +399,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   .viewer-map { order: -1; height: 48dvh; min-height: 340px; border-bottom: 1px solid var(--border); }
   .viewer-sidebar { overflow: visible; border-right: 0; }
   .viewer-header, .viewer-section, .viewer-footer { padding-right: 18px; padding-left: 18px; }
-  .field input, .field select, .input-action button, .resolution-control button, .button { min-height: 44px; }
+  .field input, .field select, .input-action button, .resolution-control button, .map-color-control button, .button { min-height: 44px; }
   .input-action { grid-template-columns: minmax(0, 1fr) 44px; }
   .map-hover { right: 10px; bottom: 10px; left: 10px; width: auto; max-height: calc(100% - 60px); overflow-y: auto; }
   .analytics-panel { top: 8px; right: 8px; bottom: 8px; left: 8px; width: auto; min-width: 0; }

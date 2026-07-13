@@ -9,6 +9,11 @@ import { Protocol } from "pmtiles"
 import "maplibre-gl/dist/maplibre-gl.css"
 
 import { publicAssetUrl } from "./data"
+import {
+  districtDemocraticShare,
+  partisanFillExpression,
+  type MapColorMode,
+} from "./mapColors"
 import type { AssignmentMap, Manifest, ManifestLayer } from "./types"
 
 const fineSource = "units"
@@ -23,6 +28,8 @@ export class ViewerMap {
   private assignment: AssignmentMap = {}
   private readonly map: maplibregl.Map
   private animationFrame: number | null = null
+  private colorMode: MapColorMode = "district"
+  private districtDemShares: Array<number | null> = []
   private hoveredFeature: { id: string | number; source: string; sourceLayer: string } | null = null
   private hoveredUnitId: string | null = null
 
@@ -55,6 +62,7 @@ export class ViewerMap {
       this.installUnitLayers()
       this.installEdgeLayer()
       installPlanetLabels(this.map)
+      this.applyColorMode()
       this.scheduleSync()
     })
     this.map.on("sourcedata", () => this.scheduleSync())
@@ -63,9 +71,15 @@ export class ViewerMap {
     this.map.on("mouseout", () => this.clearHover())
   }
 
-  setAssignment(assignment: AssignmentMap) {
+  setAssignment(assignment: AssignmentMap, districtDemShares: Array<number | null> = []) {
     this.assignment = assignment
+    this.districtDemShares = districtDemShares
     if (this.map.isStyleLoaded()) this.scheduleSync()
+  }
+
+  setColorMode(colorMode: MapColorMode) {
+    this.colorMode = colorMode
+    if (this.map.isStyleLoaded()) this.applyColorMode()
   }
 
   destroy() {
@@ -208,10 +222,20 @@ export class ViewerMap {
       const unitId = String(feature.id)
       if (seen.has(unitId)) continue
       seen.add(unitId)
+      const district = this.assignment[unitId] ?? 0
       this.map.setFeatureState(
         { id: feature.id, source, sourceLayer },
-        { district: this.assignment[unitId] ?? 0 },
+        { demShare: districtDemocraticShare(this.districtDemShares, district), district },
       )
+    }
+  }
+
+  private applyColorMode() {
+    const fillColor = this.colorMode === "partisanship"
+      ? partisanFillExpression()
+      : districtExpression(this.manifest.counts.districts)
+    for (const layer of ["units-fill", "units-coarse-fill"]) {
+      if (this.map.getLayer(layer)) this.map.setPaintProperty(layer, "fill-color", fillColor)
     }
   }
 

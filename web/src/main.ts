@@ -18,6 +18,7 @@ import {
 import { loadState, type LoadedState } from "./data"
 import { assignmentWithinTolerance, denseToAssignment } from "./graph"
 import { ViewerMap } from "./map"
+import type { MapColorMode } from "./mapColors"
 import ReComWorker from "./recom.worker?worker"
 import type {
   AssignmentMap,
@@ -98,6 +99,11 @@ app.innerHTML = `
     <section class="viewer-map" aria-label="Generated district map">
       <div id="map" class="viewer-map__canvas"></div>
       <div class="map-label"><strong id="map-state">Loading</strong><span id="map-status">Authentic geography</span></div>
+      <div class="map-color-control">
+        <span>Map color</span>
+        <div role="group" aria-label="Map color mode"><button type="button" data-map-color="district" aria-pressed="true">Districts</button><button type="button" data-map-color="partisanship" aria-pressed="false" disabled>Partisan</button></div>
+        <div class="partisan-legend" id="partisan-legend" role="img" aria-label="Each generated district colored continuously by its aggregate 2024 presidential two-party margin from Republican plus 30 through even to Democratic plus 30" hidden><i></i><div><span>R +30</span><span>Even</span><span>D +30</span></div></div>
+      </div>
       <div class="map-hover" id="map-hover" hidden></div>
     </section>
     <aside class="analytics-panel" id="analytics-panel" role="dialog" aria-label="Generated plan analytics" hidden>
@@ -121,9 +127,11 @@ const elements = {
   generationNote: get("generation-note"), ideal: get("ideal-value"), islandNote: get("island-note"),
   loadLabel: get("load-label"), loadState: get("load-state"), map: get("map"),
   mapHover: get("map-hover"),
+  mapColorButtons: Array.from(document.querySelectorAll<HTMLButtonElement>("[data-map-color]")),
   mapState: get("map-state"), mapStatus: get("map-status"), population: get("population-value"),
   randomSeed: button("random-seed"), rejected: get("rejected-value"), resultSection: get("result-section"),
   openAnalytics: button("open-analytics"),
+  partisanLegend: get("partisan-legend"),
   resolutionButtons: Array.from(document.querySelectorAll<HTMLButtonElement>("[data-resolution]")),
   resolutionHelp: get("resolution-help"),
   resultSeed: get("result-seed"), runLabel: get("run-label"), runPercent: get("run-percent"),
@@ -160,6 +168,12 @@ let unitLookup = new Map<string, LoadedState["units"][number]>()
 let requestId = 0
 
 elements.state.addEventListener("change", () => void loadSelectedState())
+for (const control of elements.mapColorButtons) {
+  control.addEventListener("click", () => {
+    const colorMode = control.dataset.mapColor === "partisanship" ? "partisanship" : "district"
+    activateMapColorMode(colorMode)
+  })
+}
 for (const control of elements.resolutionButtons) {
   control.addEventListener("click", () => {
     activateResolution(control.dataset.resolution === "precinct" ? "precinct" : "block-group")
@@ -205,6 +219,7 @@ async function loadSelectedState() {
   unitLookup = new Map()
   viewerMap?.destroy()
   viewerMap = null
+  activateMapColorMode("district")
   clearResult()
   setError(null)
   setControls(false)
@@ -235,6 +250,7 @@ async function loadSelectedState() {
     elements.mapState.textContent = bundle.manifest.state.stateName
     elements.mapStatus.textContent = `${resolution === "precinct" ? "Precincts" : "Block groups"} · awaiting generation`
     viewerMap = new ViewerMap(elements.map, bundle.manifest, renderHover)
+    viewerMap.setColorMode(currentMapColorMode())
     setControls(true)
     elements.runLabel.textContent = "Ready to generate"
     elements.generationNote.textContent = bundle.manifest.counts.districts === 1
@@ -258,6 +274,7 @@ async function generate() {
     return
   }
   updateUrl()
+  analytics = null
   clearResult()
   setError(null)
 
@@ -341,13 +358,20 @@ async function generate() {
 
 function finishPlan(seed: bigint) {
   if (!loaded || !assignment || !lastStatus) return
-  viewerMap?.setAssignment(assignment)
   analytics = computeAnalytics(
     loaded.units,
     assignment,
     loaded.manifest.counts.districts,
     lastStatus,
   )
+  viewerMap?.setAssignment(
+    assignment,
+    analytics.districts.map((district) => district.election.demShare),
+  )
+  const partisanControl = elements.mapColorButtons.find(
+    (control) => control.dataset.mapColor === "partisanship",
+  )
+  if (partisanControl) partisanControl.disabled = false
   renderScore(lastStatus)
   setProgress(100)
   elements.runLabel.textContent = `${loaded.manifest.counts.districts}-district plan ready`
@@ -384,6 +408,7 @@ function clearResult() {
   elements.scoreGrid.hidden = true
   setProgress(0)
   if (viewerMap) viewerMap.setAssignment({})
+  activateMapColorMode("district")
   elements.analyticsPanel.hidden = true
   elements.mapHover.hidden = true
 }
@@ -617,6 +642,23 @@ function escapeHtml(value: string) { return value.replace(/[&<>'"]/g, (character
 function syncRangeLabels() {
   elements.toleranceOutput.textContent = `${Number(elements.tolerance.value).toFixed(1)}%`
   elements.countyOutput.textContent = elements.county.value
+}
+
+function activateMapColorMode(colorMode: MapColorMode) {
+  for (const control of elements.mapColorButtons) {
+    control.setAttribute("aria-pressed", String(control.dataset.mapColor === colorMode))
+    if (control.dataset.mapColor === "partisanship" && !analytics) control.disabled = true
+  }
+  elements.partisanLegend.hidden = colorMode !== "partisanship"
+  viewerMap?.setColorMode(colorMode)
+}
+
+function currentMapColorMode(): MapColorMode {
+  return elements.mapColorButtons.find(
+    (control) => control.getAttribute("aria-pressed") === "true",
+  )?.dataset.mapColor === "partisanship"
+    ? "partisanship"
+    : "district"
 }
 
 function activateResolution(resolution: ViewerResolution) {
