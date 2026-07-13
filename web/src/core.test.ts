@@ -81,9 +81,21 @@ describe("recom-core WASM scoring contract", () => {
     expect(batch.changedDistricts.every((district) => district === 1 || district === 2)).toBe(true)
     chain.free()
   })
+
+  it("serializes burst restarts with monotonic event numbers", () => {
+    const chain = createChain(null, 0, 2)
+    const batch = chain.step_traced(40) as ProposalTraceBatch
+    const restarts = batch.proposals.filter((proposal) => proposal.outcome === "burstRestart")
+    expect(restarts.length).toBeGreaterThan(0)
+    expect(batch.status.burstRestarts).toBe(restarts.length)
+    expect(batch.proposals.map((proposal) => proposal.proposal)).toEqual(
+      batch.proposals.map((_, index) => index + 1),
+    )
+    chain.free()
+  })
 })
 
-function createChain(edgeWeights: Uint32Array | null, countySurcharge = 0) {
+function createChain(edgeWeights: Uint32Array | null, countySurcharge = 0, burstLength?: number) {
   return new Chain(
     new Uint32Array([0, 1, 3, 5, 6]),
     new Uint32Array([1, 0, 2, 1, 3, 2]),
@@ -96,6 +108,7 @@ function createChain(edgeWeights: Uint32Array | null, countySurcharge = 0) {
       popTolerance: 0.01,
       countySurcharge,
       treeAttempts: 8,
+      ...(burstLength === undefined ? {} : { burstLength }),
       frozenDistricts: new Uint16Array(),
       initialAssignment: new Uint16Array([1, 1, 2, 2]),
     },

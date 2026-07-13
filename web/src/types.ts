@@ -115,6 +115,7 @@ export type PlanScore = {
 export type ChainStatus = {
   stepsAccepted: number
   stepsRejected: number
+  burstRestarts: number
   currentScore: PlanScore
   bestScore: PlanScore
   frontierSize: number
@@ -122,6 +123,7 @@ export type ChainStatus = {
 
 export type ProposalOutcome =
   | "accepted"
+  | "burstRestart"
   | "noEligibleBoundary"
   | "noSpanningTree"
   | "noBalancedCut"
@@ -166,6 +168,8 @@ export type GenerationParams = {
   seed: bigint
   popTolerance: number
   steps: number
+  /** Attempted proposals per neutral burst; zero disables weighted-best restarts. */
+  burstLength: number
   /** Bounded 0–50 preference shared by spanning-tree proposals and optimized-plan selection. */
   countySurcharge: number
   treeAttempts: number

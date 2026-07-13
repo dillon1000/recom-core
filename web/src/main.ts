@@ -110,6 +110,7 @@ app.innerHTML = `
         <div class="control-grid">
           <label class="field"><span>Proposals</span><input id="steps" type="number" min="0" max="100000" step="100" /></label>
           <label class="field"><span>Tree attempts</span><input id="attempts" type="number" min="1" max="20" /></label>
+          <label class="field" title="Attempted proposals per neutral burst; 0 disables bursts."><span>Burst length</span><input id="burst" type="number" min="0" max="10000" step="5" title="0 disables bursts." /></label>
         </div>
         <label class="range-field"><span><span>Population tolerance</span><output id="tolerance-output">5.0%</output></span><input id="tolerance" type="range" min="0.5" max="15" step="0.5" /></label>
         <label class="range-field"><span><span>County preservation</span><output id="county-output">10</output></span><input id="county" type="range" min="0" max="50" step="1" /><small>Biases proposals toward county boundaries and weights county fragments when Optimize selects a plan.</small></label>
@@ -178,7 +179,7 @@ app.innerHTML = `
 `
 
 const elements = {
-  accepted: get("accepted-value"), attempts: input("attempts"), copy: button("copy"),
+  accepted: get("accepted-value"), attempts: input("attempts"), burst: input("burst"), copy: button("copy"),
   analyticsBody: get("analytics-body"), analyticsPanel: get("analytics-panel"),
   analyticsSubtitle: get("analytics-subtitle"), analyticsTabs: get("analytics-tabs"),
   closeAnalytics: button("close-analytics"),
@@ -223,6 +224,7 @@ activateResolution(setup.resolution)
 elements.seed.value = setup.seed
 elements.steps.value = String(setup.steps)
 elements.attempts.value = String(setup.attempts)
+elements.burst.value = String(setup.burst)
 elements.tolerance.value = String(setup.tolerance)
 elements.county.value = String(setup.county)
 syncRangeLabels()
@@ -601,6 +603,7 @@ function readControls(districts: number) {
     seed,
     steps: boundedInteger(elements.steps.value, 0, 100_000),
     treeAttempts: boundedInteger(elements.attempts.value, 1, 20),
+    burstLength: boundedInteger(elements.burst.value, 0, 10_000),
     popTolerance: Number(elements.tolerance.value) / 100,
     countySurcharge: Number(elements.county.value),
   }
@@ -615,6 +618,7 @@ function readSetup() {
     seed: /^\d+$/.test(query.get("seed") ?? "") ? query.get("seed") ?? "42" : "42",
     steps: boundedInteger(query.get("steps") ?? "200", 0, 100_000),
     attempts: boundedInteger(query.get("attempts") ?? "3", 1, 20),
+    burst: boundedInteger(query.get("burst") ?? "0", 0, 10_000),
     tolerance: boundedNumber(query.get("tolerance"), 0.5, 15, 5),
     county: boundedNumber(query.get("county"), 0, 50, 10),
     resultMode: resultModeFromQuery(query.get("output")),
@@ -628,6 +632,7 @@ function updateUrl() {
   url.searchParams.set("seed", elements.seed.value)
   url.searchParams.set("steps", elements.steps.value)
   url.searchParams.set("attempts", elements.attempts.value)
+  url.searchParams.set("burst", elements.burst.value)
   url.searchParams.set("tolerance", elements.tolerance.value)
   url.searchParams.set("county", elements.county.value)
   url.searchParams.set("output", currentResultMode())
@@ -918,6 +923,7 @@ function downloadAssignment() {
       seed: elements.seed.value,
       steps: Number(elements.steps.value),
       treeAttempts: Number(elements.attempts.value),
+      burstLength: boundedInteger(elements.burst.value, 0, 10_000),
       populationTolerancePercent: Number(elements.tolerance.value),
       countySurcharge: Number(elements.county.value),
     },
@@ -964,7 +970,9 @@ function openProposalExplorer(requestedProposal?: number) {
     selectedProposal: Number.isFinite(requestedProposal)
       ? Math.max(0, Math.floor(requestedProposal ?? 0))
       : selectedProposal
-        ?? (lastStatus ? lastStatus.stepsAccepted + lastStatus.stepsRejected : 0),
+        ?? (lastStatus
+          ? lastStatus.stepsAccepted + lastStatus.stepsRejected + lastStatus.burstRestarts
+          : 0),
     storageKey: `${loaded.manifest.state.slug}:${elements.seed.value}`,
     unitVotes: loaded.graph.unitIds.map((unitId) => {
       const result = unitLookup.get(unitId)?.president2024
@@ -1183,7 +1191,7 @@ function setControls(enabled: boolean) {
 }
 
 function setFormDisabled(disabled: boolean) {
-  for (const control of [elements.state, elements.seed, elements.steps, elements.attempts, elements.tolerance, elements.county, elements.randomSeed]) {
+  for (const control of [elements.state, elements.seed, elements.steps, elements.attempts, elements.burst, elements.tolerance, elements.county, elements.randomSeed]) {
     control.disabled = disabled
   }
   for (const control of elements.resolutionButtons) control.disabled = disabled
@@ -1214,7 +1222,7 @@ function randomSeed() {
 
 function emptyStatus(): ChainStatus {
   const score = { weightedCut: 0, countyFragments: 0, countySplits: 0, maxDeviationPpm: 0 }
-  return { stepsAccepted: 0, stepsRejected: 0, currentScore: score, bestScore: score, frontierSize: 1 }
+  return { stepsAccepted: 0, stepsRejected: 0, burstRestarts: 0, currentScore: score, bestScore: score, frontierSize: 1 }
 }
 
 function boundedInteger(value: string, minimum: number, maximum: number) {
