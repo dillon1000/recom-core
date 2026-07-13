@@ -11,8 +11,8 @@ use common::{grid_graph, row_stripes};
 
 #[test]
 fn fixed_seed_matches_golden_assignment_hash() {
-    let first = run_chain();
-    let second = run_chain();
+    let first = run_chain(0);
+    let second = run_chain(0);
     assert_eq!(first, second);
     let hash = assignment_hash(&first);
     assert_eq!(
@@ -21,7 +21,19 @@ fn fixed_seed_matches_golden_assignment_hash() {
     );
 }
 
-fn run_chain() -> Vec<u16> {
+#[test]
+fn short_bursts_match_golden_assignment_hash() {
+    let first = run_chain(25);
+    let second = run_chain(25);
+    assert_eq!(first, second);
+    let hash = assignment_hash(&first);
+    assert_eq!(
+        hash,
+        "0935aef3ef125ee7abd6dc761655a68e74ebf40099166b682d759af2f688ae74"
+    );
+}
+
+fn run_chain(burst_length: u32) -> Vec<u16> {
     let graph = grid_graph(12, 12, false);
     let initial = row_stripes(12, 12, 4);
     let mut chain = Chain::new(
@@ -33,7 +45,7 @@ fn run_chain() -> Vec<u16> {
             pop_tolerance: 0.05,
             county_surcharge: 10,
             tree_attempts: 12,
-            burst_length: 0,
+            burst_length,
             frozen_districts: Vec::new(),
         },
         Some(initial),
