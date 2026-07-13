@@ -1,7 +1,7 @@
 /**
  * Runs recom-core in a dedicated worker. Inputs are transfer-owned CSR buffers,
  * a deterministic seed, and bounded proposal parameters; outputs are chunked
- * progress plus the best one-based assignment. Terminating the worker is the
+ * progress plus the final sampled assignment. Terminating the worker is the
  * immediate cancellation boundary during synchronous chain construction.
  */
 import initializeWasm, { Chain } from "./wasm/recom_core"
@@ -48,7 +48,10 @@ async function run(request: WorkerRequest) {
       post({ type: "progress", requestId: request.requestId, completed, status })
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
-    const assignment = chain.best_assignment()
+    // Generation exposes the seeded chain endpoint. The separately tracked
+    // best assignment remains available for a future explicit optimization
+    // mode instead of pinning random seeds to a strong reference plan.
+    const assignment = chain.assignment()
     const response: WorkerResponse = {
       type: "complete",
       requestId: request.requestId,

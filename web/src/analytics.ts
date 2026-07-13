@@ -150,8 +150,8 @@ export function computeAnalytics(
     medianAbsoluteDeviationPercent: median(absoluteDeviations),
     populationRange: Math.max(0, ...populations) - Math.min(...populations),
     acceptanceRate: totalSteps ? status.stepsAccepted / totalSteps : 0,
-    cutEdges: status.bestScore.cutEdges,
-    cutEdgesPerDistrict: status.bestScore.cutEdges / districtCount,
+    cutEdges: status.currentScore.cutEdges,
+    cutEdgesPerDistrict: status.currentScore.cutEdges / districtCount,
     counties: {
       total: districtsByCounty.size,
       splitCount: [...districtsByCounty.values()].filter((districtSet) => districtSet.size > 1).length,

@@ -75,7 +75,7 @@ app.innerHTML = `
         <div class="metric-grid metric-grid--two" id="score-grid" hidden>
           <div class="metric"><span>Accepted</span><strong id="accepted-value">0</strong></div>
           <div class="metric"><span>Rejected</span><strong id="rejected-value">0</strong></div>
-          <div class="metric"><span>Best cut edges</span><strong id="cut-value">0</strong></div>
+          <div class="metric"><span>Plan cut edges</span><strong id="cut-value">0</strong></div>
           <div class="metric"><span>County splits</span><strong id="splits-value">0</strong></div>
         </div>
         <p class="note" id="generation-note">ReCom starts from the published reference assignment, then advances the seeded proposal chain entirely inside a Web Worker.</p>
@@ -399,8 +399,8 @@ function renderScore(status: ChainStatus) {
   elements.scoreGrid.hidden = false
   elements.accepted.textContent = status.stepsAccepted.toLocaleString()
   elements.rejected.textContent = status.stepsRejected.toLocaleString()
-  elements.cut.textContent = status.bestScore.cutEdges.toLocaleString()
-  elements.splits.textContent = status.bestScore.countySplits.toLocaleString()
+  elements.cut.textContent = status.currentScore.cutEdges.toLocaleString()
+  elements.splits.textContent = status.currentScore.countySplits.toLocaleString()
 }
 
 function clearResult() {
