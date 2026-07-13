@@ -33,6 +33,11 @@ impl ChainRng {
                 0
             }
     }
+
+    pub(crate) fn accept(&mut self, numerator: u64, denominator: u64) -> bool {
+        let draw = self.0.next_u64();
+        u128::from(draw) * u128::from(denominator) < u128::from(numerator) << 64
+    }
 }
 
 /// Maps the public 0–50 preference onto the same 32-bit range as the random edge key. At 50,
@@ -58,5 +63,14 @@ mod tests {
             preserved.edge_key(true, 50) - plain.edge_key(true, 0),
             u64::from(u32::MAX)
         );
+    }
+
+    #[test]
+    fn integer_acceptance_handles_probability_edges() {
+        for seed in 0..128 {
+            assert!(ChainRng::new(seed).accept(7, 7));
+            assert!(ChainRng::new(seed).accept(8, 7));
+            assert!(!ChainRng::new(seed).accept(0, 7));
+        }
     }
 }
