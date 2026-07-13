@@ -1,7 +1,8 @@
 /**
  * Owns the standalone viewer's map-linked proposal explorer. Inputs are compact trace chunks,
  * one-based checkpoints, and the initial score; outputs provide timeline playback, score-cloud
- * selection, filters, persistent bookmarks, two-plan comparison, sharing, and branch assignments.
+ * selection, filters, persistent bookmarks, two-plan comparison, sharing, branch assignments, and
+ * the responsive map-first chain workbench used to operate those states.
  */
 import {
   assignmentAtProposal,
@@ -41,6 +42,19 @@ const defaultFilters: ProposalFilters = {
   maxDemSeats: null,
 }
 
+const proposalIcons = {
+  bookmark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1Z"/></svg>',
+  branch: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="4" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="20" r="2"/><path d="M6 6v12M8 7.5c5 0 4-1.5 8-1.5M8 16.5c5 0 4-8.5 8-8.5"/></svg>',
+  check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>',
+  close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  compare: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></svg>',
+  next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>',
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg>',
+  previous: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
+  share: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2"/><circle cx="6" cy="12" r="2"/><circle cx="18" cy="19" r="2"/><path d="m8 11 8-5M8 13l8 5"/></svg>',
+}
+
 export class ProposalPanel {
   private readonly root: HTMLElement
   private data: ProposalPanelData | null = null
@@ -57,18 +71,7 @@ export class ProposalPanel {
     root.setAttribute("role", "dialog")
     root.setAttribute("aria-label", "Proposal explorer")
     root.hidden = true
-    root.innerHTML = [
-      '<header class="proposal-explorer__header"><div><span>CHAIN OBSERVATORY</span><h2>Proposal explorer</h2><p data-proposal-summary></p></div><button type="button" data-action="close" aria-label="Close proposal explorer">×</button></header>',
-      '<div class="proposal-explorer__body">',
-      '<section class="proposal-explorer__timeline"><div class="proposal-explorer__section-heading"><h3>Chain timeline</h3><span data-proposal-position></span></div><input data-proposal-range aria-label="Selected proposal" type="range" min="0" value="0"><div class="proposal-explorer__transport"><button type="button" data-action="previous" aria-label="Previous filtered proposal">←</button><button type="button" data-action="play">▶ Play</button><button type="button" data-action="next" aria-label="Next filtered proposal">→</button></div><div class="proposal-explorer__event"><span class="proposal-outcome" data-proposal-outcome></span><strong data-proposal-title></strong><small data-proposal-detail></small></div></section>',
-      '<section class="proposal-explorer__cloud"><div class="proposal-explorer__section-heading"><h3>Score cloud</h3><span data-visible-count></span></div><canvas data-score-cloud tabindex="0" role="img" aria-label="Accepted proposal score cloud. Horizontal position is weighted cut and vertical position is county fragments."></canvas><div class="proposal-explorer__cloud-legend"><span><i></i>Accepted</span><span><i class="frontier"></i>Frontier entry</span><span><i class="selected"></i>Selected</span></div></section>',
-      '<section class="proposal-explorer__filters"><div class="proposal-explorer__section-heading"><h3>Filters</h3><button type="button" data-action="reset-filters">Reset</button></div><div><label><input data-filter="accepted" type="checkbox"> Accepted only</label><label><input data-filter="frontier" type="checkbox"> Frontier entries</label><label><span>Max county fragments</span><input data-filter="fragments" type="number" min="0" placeholder="Any"></label><label><span>Max deviation %</span><input data-filter="deviation" type="number" min="0" step="0.1" placeholder="Any"></label><label><span>Minimum D seats</span><input data-filter="min-dem" type="number" min="0" placeholder="Any"></label><label><span>Maximum D seats</span><input data-filter="max-dem" type="number" min="0" placeholder="Any"></label></div></section>',
-      '<section class="proposal-explorer__metrics"><div class="proposal-explorer__section-heading"><h3>Selected score</h3><span data-score-kind></span></div><div data-score-metrics></div></section>',
-      '<section class="proposal-explorer__comparison" data-comparison hidden><div class="proposal-explorer__section-heading"><h3>Compare</h3><button type="button" data-action="clear-compare">Clear</button></div><p data-comparison-title></p><div data-comparison-metrics></div></section>',
-      '<section class="proposal-explorer__bookmarks"><div class="proposal-explorer__section-heading"><h3>Bookmarks</h3><span data-bookmark-count></span></div><div data-bookmarks></div></section>',
-      '</div>',
-      '<footer class="proposal-explorer__actions"><button type="button" data-action="bookmark">☆ Bookmark</button><button type="button" data-action="compare">⇄ Pin compare</button><button type="button" data-action="share">↗ Share</button><button class="proposal-explorer__branch" type="button" data-action="branch">⑂ Branch here</button></footer>',
-    ].join("")
+    root.innerHTML = proposalPanelMarkup()
     document.querySelector(".viewer-shell")?.append(root)
     this.root = root
     this.bind()
@@ -189,6 +192,7 @@ export class ProposalPanel {
     const range = this.element<HTMLInputElement>("[data-proposal-range]")
     range.max = String(this.maximum())
     range.value = String(this.selectedProposal)
+    range.style.setProperty("--fill", `${this.maximum() === 0 ? 0 : this.selectedProposal / this.maximum() * 100}%`)
     const outcome = this.element("[data-proposal-outcome]")
     outcome.className = "proposal-outcome proposal-outcome--" + (event?.outcome ?? "initial")
     outcome.textContent = event ? outcomeLabel(event) : "Initial plan"
@@ -253,8 +257,11 @@ export class ProposalPanel {
         container.append(button)
       }
     }
-    this.element<HTMLButtonElement>('[data-action="bookmark"]').textContent =
-      (this.bookmarks.includes(this.selectedProposal) ? "★ Bookmarked" : "☆ Bookmark")
+    this.setActionContent(
+      '[data-action="bookmark"]',
+      proposalIcons.bookmark,
+      this.bookmarks.includes(this.selectedProposal) ? "Bookmarked" : "Bookmark",
+    )
   }
 
   private drawCloud() {
@@ -268,9 +275,11 @@ export class ProposalPanel {
     const context = canvas.getContext("2d")
     if (!context) return
     context.scale(ratio, ratio)
-    context.fillStyle = "#f4f0e9"
+    const styles = getComputedStyle(this.root)
+    const color = (token: string, fallback: string) => styles.getPropertyValue(token).trim() || fallback
+    context.fillStyle = color("--card", "#fdfbf7")
     context.fillRect(0, 0, width, height)
-    context.strokeStyle = "#d7d1c7"
+    context.strokeStyle = color("--border", "#ddd7cd")
     context.beginPath()
     context.moveTo(34, 12)
     context.lineTo(34, height - 26)
@@ -283,13 +292,27 @@ export class ProposalPanel {
       const compared = event.proposal === this.compareProposal
       context.beginPath()
       context.arc(point.x, point.y, selected || compared ? 5 : event.frontierRetained ? 3.5 : 2, 0, Math.PI * 2)
-      context.fillStyle = selected ? "#171717" : compared ? "#ffffff" : event.frontierRetained ? "#a35216" : "rgba(38,74,108,.48)"
+      context.globalAlpha = selected || compared ? 1 : event.frontierRetained ? 0.9 : 0.48
+      context.fillStyle = selected
+        ? color("--ink", "#282522")
+        : compared
+          ? color("--card", "#fdfbf7")
+          : event.frontierRetained
+            ? "#a35216"
+            : color("--accent", "#3f5870")
       context.fill()
+      context.globalAlpha = 1
       if (compared || event.frontierRetained) {
-        context.strokeStyle = compared ? "#171717" : "#7c3a0e"
+        context.strokeStyle = compared ? color("--ink", "#282522") : "#7c3a0e"
         context.stroke()
       }
     }
+    context.fillStyle = color("--faint", "#8a847b")
+    context.font = '8px "Geist Mono Variable", monospace'
+    context.fillText("COUNTY FRAGMENTS", 38, 10)
+    context.textAlign = "right"
+    context.fillText("WEIGHTED CUT", width - 10, height - 8)
+    context.textAlign = "left"
   }
 
   private selectCloudPoint(pointer: PointerEvent) {
@@ -350,7 +373,7 @@ export class ProposalPanel {
       this.stopPlayback()
       return
     }
-    this.element<HTMLButtonElement>('[data-action="play"]').textContent = "Ⅱ Pause"
+    this.setActionContent('[data-action="play"]', proposalIcons.pause, "Pause")
     this.playback = window.setInterval(() => {
       const next = nearestVisibleProposal(this.visible(), this.selectedProposal, 1)
       if (next === this.selectedProposal) this.stopPlayback()
@@ -362,7 +385,7 @@ export class ProposalPanel {
     if (this.playback !== null) window.clearInterval(this.playback)
     this.playback = null
     const button = this.root.querySelector<HTMLButtonElement>('[data-action="play"]')
-    if (button) button.textContent = "▶ Play"
+    if (button) this.setActionContent('[data-action="play"]', proposalIcons.play, "Play")
   }
 
   private resetFilters() {
@@ -378,9 +401,10 @@ export class ProposalPanel {
     const url = new URL(location.href)
     url.searchParams.set("proposal", String(this.selectedProposal))
     await navigator.clipboard.writeText(url.toString())
-    const button = this.element<HTMLButtonElement>('[data-action="share"]')
-    button.textContent = "✓ Copied"
-    window.setTimeout(() => { button.textContent = "↗ Share" }, 1_500)
+    this.setActionContent('[data-action="share"]', proposalIcons.check, "Copied")
+    window.setTimeout(() => {
+      this.setActionContent('[data-action="share"]', proposalIcons.share, "Share")
+    }, 1_500)
   }
 
   private branch() {
@@ -405,6 +429,64 @@ export class ProposalPanel {
   private text(selector: string, value: string) {
     this.element(selector).textContent = value
   }
+
+  private setActionContent(selector: string, icon: string, label: string) {
+    this.element<HTMLButtonElement>(selector).innerHTML = icon + "<span>" + label + "</span>"
+  }
+}
+
+function proposalPanelMarkup() {
+  return `
+    <header class="proposal-explorer__header">
+      <div class="proposal-explorer__identity">
+        <span class="proposal-explorer__mark">PX</span>
+        <div><span>RECOM-CORE / CHAIN LAB</span><h2>Proposal explorer</h2><p data-proposal-summary></p></div>
+      </div>
+      <button type="button" data-action="close" aria-label="Close proposal explorer">${proposalIcons.close}</button>
+    </header>
+    <div class="proposal-explorer__body">
+      <section class="proposal-explorer__timeline">
+        ${sectionHeading("01", "Chain timeline", '<span data-proposal-position></span>')}
+        <input data-proposal-range aria-label="Selected proposal" type="range" min="0" value="0">
+        <div class="proposal-explorer__transport">
+          <button type="button" data-action="previous" aria-label="Previous filtered proposal">${proposalIcons.previous}</button>
+          <button type="button" data-action="play">${proposalIcons.play}<span>Play</span></button>
+          <button type="button" data-action="next" aria-label="Next filtered proposal">${proposalIcons.next}</button>
+        </div>
+        <div class="proposal-explorer__event"><span class="proposal-outcome" data-proposal-outcome></span><strong data-proposal-title></strong><small data-proposal-detail></small></div>
+      </section>
+      <section class="proposal-explorer__cloud">
+        ${sectionHeading("02", "Score cloud", '<span data-visible-count></span>')}
+        <canvas data-score-cloud tabindex="0" role="img" aria-label="Accepted proposal score cloud. Horizontal position is weighted cut and vertical position is county fragments."></canvas>
+        <div class="proposal-explorer__cloud-legend"><span><i></i>Accepted</span><span><i class="frontier"></i>Frontier entry</span><span><i class="selected"></i>Selected</span></div>
+      </section>
+      <section class="proposal-explorer__metrics">
+        ${sectionHeading("03", "Selected score", '<span data-score-kind></span>')}
+        <div data-score-metrics></div>
+      </section>
+      <section class="proposal-explorer__filters">
+        ${sectionHeading("04", "Filters", '<button type="button" data-action="reset-filters">Reset</button>')}
+        <div><label><input data-filter="accepted" type="checkbox"> Accepted only</label><label><input data-filter="frontier" type="checkbox"> Frontier entries</label><label><span>Max county fragments</span><input data-filter="fragments" type="number" min="0" placeholder="Any"></label><label><span>Max deviation %</span><input data-filter="deviation" type="number" min="0" step="0.1" placeholder="Any"></label><label><span>Minimum D seats</span><input data-filter="min-dem" type="number" min="0" placeholder="Any"></label><label><span>Maximum D seats</span><input data-filter="max-dem" type="number" min="0" placeholder="Any"></label></div>
+      </section>
+      <section class="proposal-explorer__comparison" data-comparison hidden>
+        ${sectionHeading("05", "Compare", '<button type="button" data-action="clear-compare">Clear</button>')}
+        <p data-comparison-title></p><div data-comparison-metrics></div>
+      </section>
+      <section class="proposal-explorer__bookmarks">
+        ${sectionHeading("06", "Bookmarks", '<span data-bookmark-count></span>')}
+        <div data-bookmarks></div>
+      </section>
+    </div>
+    <footer class="proposal-explorer__actions">
+      <button type="button" data-action="bookmark">${proposalIcons.bookmark}<span>Bookmark</span></button>
+      <button type="button" data-action="compare">${proposalIcons.compare}<span>Pin compare</span></button>
+      <button type="button" data-action="share">${proposalIcons.share}<span>Share</span></button>
+      <button class="proposal-explorer__branch" type="button" data-action="branch">${proposalIcons.branch}<span>Branch here</span></button>
+    </footer>`
+}
+
+function sectionHeading(index: string, title: string, action: string) {
+  return `<div class="proposal-explorer__section-heading"><div><span>${index}</span><h3>${title}</h3></div>${action}</div>`
 }
 
 function metricHtml(items: Array<[string, string]>) {
