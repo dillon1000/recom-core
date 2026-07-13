@@ -127,6 +127,9 @@ export type ProposalOutcome =
   | "noEligibleBoundary"
   | "noSpanningTree"
   | "noBalancedCut"
+  | "nonAdjacentPair"
+  | "balanceBoundExceeded"
+  | "seamRejected"
 
 export type ProposalTrace = {
   proposal: number
@@ -163,11 +166,16 @@ export type GraphInput = {
   unitIds: string[]
 }
 
+export type RecomVariant = "cutEdgesRmst" | "reversible"
+
 export type GenerationParams = {
   districts: number
   seed: bigint
   popTolerance: number
   steps: number
+  variant: RecomVariant
+  /** Reversible ReCom balance-edge upper bound; zero is unset for the standard sampler. */
+  balanceUb: number
   /** Attempted proposals per neutral burst; zero disables weighted-best restarts. */
   burstLength: number
   /** Bounded 0–50 preference shared by spanning-tree proposals and optimized-plan selection. */
