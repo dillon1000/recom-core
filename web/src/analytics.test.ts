@@ -9,6 +9,7 @@ const status: ChainStatus = {
   frontierSize: 2,
   stepsAccepted: 9,
   stepsRejected: 1,
+  burstRestarts: 0,
 }
 
 describe("computeAnalytics", () => {

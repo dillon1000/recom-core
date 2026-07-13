@@ -12,6 +12,7 @@ const status: ChainStatus = {
   frontierSize: 4,
   stepsAccepted: 80,
   stepsRejected: 20,
+  burstRestarts: 0,
 }
 
 describe("result mode", () => {

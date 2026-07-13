@@ -1,5 +1,5 @@
 /**
- * Reconstructs individual ReCom proposals from chunk checkpoints and compact accepted deltas.
+ * Reconstructs individual ReCom proposals from chunk checkpoints and compact state deltas.
  * Inputs are one-based dense assignments plus worker trace chunks; outputs support random access,
  * filtering, comparison, playback, bookmarks, branching, and shareable proposal selection without
  * retaining one complete assignment per attempted step.

@@ -223,7 +223,9 @@ export class ProposalPanel {
     const event = proposalAt(data.chunks, this.selectedProposal)
     const score = event?.score ?? data.initialScore
     const accepted = this.events.filter((proposal) => proposal.outcome === "accepted").length
-    this.text("[data-proposal-summary]", this.events.length.toLocaleString() + " attempts · " + accepted.toLocaleString() + " accepted · " + (this.events.length - accepted).toLocaleString() + " rejected")
+    const restarts = this.events.filter((proposal) => proposal.outcome === "burstRestart").length
+    const rejected = this.events.length - accepted - restarts
+    this.text("[data-proposal-summary]", (accepted + rejected).toLocaleString() + " attempts · " + accepted.toLocaleString() + " accepted · " + rejected.toLocaleString() + " rejected" + (restarts > 0 ? " · " + restarts.toLocaleString() + " restarted" : ""))
     this.text("[data-proposal-position]", this.selectedProposal.toLocaleString() + " / " + this.maximum().toLocaleString())
     const range = this.element<HTMLInputElement>("[data-proposal-range]")
     range.max = String(this.maximum())
@@ -235,7 +237,9 @@ export class ProposalPanel {
     this.text("[data-proposal-title]", "Proposal " + this.selectedProposal.toLocaleString())
     this.text("[data-proposal-detail]", event?.outcome === "accepted"
       ? event.changeCount.toLocaleString() + " units changed" + (event.frontierChanged ? " · entered frontier" : "")
-      : event ? rejectionDescription(event) : "Starting assignment before the first proposal.")
+      : event?.outcome === "burstRestart"
+        ? "Burst ended; the chain resumed from the weighted Pareto-best plan."
+        : event ? rejectionDescription(event) : "Starting assignment before the first proposal.")
     this.text("[data-visible-count]", this.visible().length.toLocaleString() + " visible")
     this.text("[data-score-kind]", event?.frontierRetained ? "Frontier" : "Chain")
     this.element("[data-score-metrics]").innerHTML = metricHtml([
@@ -644,6 +648,7 @@ function scoreCloudTooltip(parameters: unknown) {
 
 function outcomeLabel(event: ProposalTrace) {
   if (event.outcome === "accepted") return "Accepted"
+  if (event.outcome === "burstRestart") return "Restarted · best plan so far"
   if (event.outcome === "noEligibleBoundary") return "Rejected · frozen boundary"
   if (event.outcome === "noSpanningTree") return "Rejected · disconnected merge"
   return "Rejected · no balanced cut"

@@ -1,6 +1,6 @@
-//! Property-tests ReCom proposals on grid and planar-like triangulated graphs. Every accepted step
-//! is checked independently for dense valid labels, nonempty contiguous districts, and population
-//! totals inside the exact tolerance used to construct the chain.
+//! Property-tests ReCom proposals and burst restarts on grid and planar-like triangulated graphs.
+//! Every trace event is checked independently for dense valid labels, nonempty contiguous
+//! districts, population balance, and agreement between incremental and full scoring.
 
 mod common;
 
@@ -23,7 +23,7 @@ proptest! {
         districts in 2_u16..5,
         seed in any::<u64>(),
     ) {
-        run_invariant_case(width, rows_per_district, districts, seed, false);
+        run_invariant_case(width, rows_per_district, districts, seed, false, 0);
     }
 
     #[test]
@@ -33,7 +33,26 @@ proptest! {
         districts in 2_u16..5,
         seed in any::<u64>(),
     ) {
-        run_invariant_case(width, rows_per_district, districts, seed, true);
+        run_invariant_case(width, rows_per_district, districts, seed, true, 0);
+    }
+
+    #[test]
+    fn short_bursts_preserve_invariants_after_every_event(
+        width in 3_usize..7,
+        rows_per_district in 2_usize..5,
+        districts in 2_u16..5,
+        seed in any::<u64>(),
+        add_diagonals in any::<bool>(),
+        burst_length in 5_u32..20,
+    ) {
+        run_invariant_case(
+            width,
+            rows_per_district,
+            districts,
+            seed,
+            add_diagonals,
+            burst_length,
+        );
     }
 }
 
@@ -43,6 +62,7 @@ fn run_invariant_case(
     districts: u16,
     seed: u64,
     add_diagonals: bool,
+    burst_length: u32,
 ) {
     let height = rows_per_district * districts as usize;
     let graph = grid_graph(width, height, add_diagonals);
@@ -58,25 +78,38 @@ fn run_invariant_case(
             pop_tolerance: tolerance,
             county_surcharge: 10,
             tree_attempts: 8,
+            burst_length,
             frozen_districts: Vec::new(),
         },
-        Some(initial),
+        Some(initial.clone()),
     )
     .expect("balanced stripe partition is valid");
-    let mut accepted = 0;
+    let bounds = PopulationBounds::new(
+        populations
+            .iter()
+            .map(|population| u64::from(*population))
+            .sum(),
+        districts,
+        tolerance,
+    )
+    .expect("bounds are valid");
+    let mut replayed = initial;
     for _ in 0..60 {
-        let status = chain.step(1);
-        if status.steps_accepted > accepted {
-            assert_partition_invariants(
-                &graph,
-                &populations,
-                chain.assignment(),
-                districts,
-                tolerance,
-            );
-            assert_eq!(status.current_score, chain.full_recompute_score());
-            accepted = status.steps_accepted;
+        let batch = chain.step_traced(1);
+        for event in batch.proposals {
+            let start = event.change_start as usize;
+            let end = start + event.change_count as usize;
+            for index in start..end {
+                replayed[batch.changed_nodes[index] as usize] = batch.changed_districts[index];
+            }
+            assert_partition_invariants(&graph, &populations, &replayed, districts, tolerance);
+            let score = Partition::new(&graph, &populations, replayed.clone(), districts, bounds)
+                .expect("replayed event remains valid")
+                .score();
+            assert_eq!(event.score, score);
         }
+        assert_eq!(batch.status.current_score, chain.full_recompute_score());
+        assert_eq!(replayed, chain.assignment());
     }
 }
 
@@ -96,6 +129,7 @@ fn frontier_entries_are_nondominated_and_rescore_exactly() {
             pop_tolerance: tolerance,
             county_surcharge: 10,
             tree_attempts: 8,
+            burst_length: 0,
             frozen_districts: Vec::new(),
         },
         Some(initial),
@@ -206,6 +240,7 @@ fn county_preservation_changes_generation_and_optimized_selection() {
                 pop_tolerance: 0.25,
                 county_surcharge,
                 tree_attempts: 8,
+                burst_length: 0,
                 frozen_districts: Vec::new(),
             },
             Some(initial.clone()),
@@ -233,6 +268,7 @@ fn county_preservation_rejects_values_above_the_public_range() {
             pop_tolerance: 0.25,
             county_surcharge: 51,
             tree_attempts: 2,
+            burst_length: 0,
             frozen_districts: Vec::new(),
         },
         Some(row_stripes(4, 4, 2)),
@@ -241,7 +277,7 @@ fn county_preservation_rejects_values_above_the_public_range() {
 }
 
 #[test]
-fn proposal_trace_reconstructs_every_accepted_change() {
+fn burst_trace_reconstructs_every_state_change() {
     let graph = grid_graph(8, 12, false);
     let populations = vec![1_u32; graph.node_count()];
     let initial = row_stripes(8, 12, 4);
@@ -251,6 +287,7 @@ fn proposal_trace_reconstructs_every_accepted_change() {
         pop_tolerance: 0.25,
         county_surcharge: 20,
         tree_attempts: 8,
+        burst_length: 10,
         frozen_districts: Vec::new(),
     };
     let mut traced = Chain::new(
@@ -263,22 +300,45 @@ fn proposal_trace_reconstructs_every_accepted_change() {
     let mut ordinary =
         Chain::new(graph, populations, params, Some(initial.clone())).expect("fixture is valid");
 
-    let batch = traced.step_traced(200);
+    let mut proposals = Vec::new();
+    let mut changed_nodes = Vec::new();
+    let mut changed_districts = Vec::new();
+    for _ in 0..200 {
+        let best_before = traced.status().best_score;
+        let batch = traced.step_traced(1);
+        for mut proposal in batch.proposals {
+            if proposal.outcome == ProposalOutcome::BurstRestart {
+                assert_eq!(proposal.score, best_before);
+                assert!(proposal.change_count > 0);
+            }
+            let old_start = proposal.change_start as usize;
+            let old_end = old_start + proposal.change_count as usize;
+            proposal.change_start = changed_nodes.len() as u32;
+            changed_nodes.extend_from_slice(&batch.changed_nodes[old_start..old_end]);
+            changed_districts.extend_from_slice(&batch.changed_districts[old_start..old_end]);
+            proposals.push(proposal);
+        }
+    }
     let ordinary_status = ordinary.step(200);
     let mut reconstructed = initial;
-    for proposal in &batch.proposals {
+    let mut restart_events = 0;
+    for (index, proposal) in proposals.iter().enumerate() {
+        assert_eq!(proposal.proposal, index as u32 + 1);
         let start = proposal.change_start as usize;
         let end = start + proposal.change_count as usize;
-        if proposal.outcome != ProposalOutcome::Accepted {
+        if proposal.outcome == ProposalOutcome::BurstRestart {
+            restart_events += 1;
+        } else if proposal.outcome != ProposalOutcome::Accepted {
             assert_eq!(proposal.change_count, 0);
         }
         for index in start..end {
-            reconstructed[batch.changed_nodes[index] as usize] = batch.changed_districts[index];
+            reconstructed[changed_nodes[index] as usize] = changed_districts[index];
         }
     }
 
-    assert_eq!(batch.proposals.len(), 200);
-    assert_eq!(batch.status, ordinary_status);
+    assert!(ordinary_status.burst_restarts > 0);
+    assert_eq!(restart_events, ordinary_status.burst_restarts);
+    assert_eq!(traced.status(), ordinary_status);
     assert_eq!(reconstructed, traced.assignment());
     assert_eq!(traced.assignment(), ordinary.assignment());
 }

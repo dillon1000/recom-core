@@ -50,17 +50,25 @@ const chunks: ProposalTraceChunk[] = [
     proposals: [
       {
         proposal: 3,
+        outcome: "burstRestart",
+        score: score(8, 3, 20_000),
+        changeStart: 0,
+        changeCount: 1,
+        frontierChanged: false,
+      },
+      {
+        proposal: 4,
         outcome: "accepted",
         score: score(7, 1, 30_000),
-        changeStart: 0,
+        changeStart: 1,
         changeCount: 2,
         frontierChanged: true,
         frontierRetained: true,
       },
     ],
-    changedNodes: new Uint32Array([0, 3]),
-    changedDistricts: new Uint16Array([2, 1]),
-    checkpoint: new Uint16Array([2, 2, 2, 1]),
+    changedNodes: new Uint32Array([1, 0, 3]),
+    changedDistricts: new Uint16Array([1, 2, 1]),
+    checkpoint: new Uint16Array([2, 1, 2, 1]),
   },
 ]
 
@@ -70,12 +78,14 @@ describe("proposal explorer", () => {
     expect([...assignmentAtProposal(initial, chunks, 0)]).toEqual([1, 1, 2, 2])
     expect([...assignmentAtProposal(initial, chunks, 1)]).toEqual([1, 2, 2, 2])
     expect([...assignmentAtProposal(initial, chunks, 2)]).toEqual([1, 2, 2, 2])
-    expect([...assignmentAtProposal(initial, chunks, 3)]).toEqual([2, 2, 2, 1])
+    expect([...assignmentAtProposal(initial, chunks, 3)]).toEqual([1, 1, 2, 2])
+    expect([...assignmentAtProposal(initial, chunks, 4)]).toEqual([2, 1, 2, 1])
   })
 
   it("indexes, filters, and navigates proposal metadata", () => {
     const events = proposalEvents(chunks)
     expect(proposalAt(chunks, 2)?.outcome).toBe("noBalancedCut")
+    expect(proposalAt(chunks, 3)?.outcome).toBe("burstRestart")
     expect(filterProposalEvents(events, {
       acceptedOnly: true,
       frontierOnly: true,
@@ -83,7 +93,7 @@ describe("proposal explorer", () => {
       maxDeviationPercent: 3,
       minDemSeats: null,
       maxDemSeats: null,
-    }).map((event) => event.proposal)).toEqual([3])
+    }).map((event) => event.proposal)).toEqual([4])
     expect(nearestVisibleProposal(events, 1, 1)).toBe(2)
     expect(nearestVisibleProposal(events, 3, -1)).toBe(2)
   })
