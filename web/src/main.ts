@@ -20,6 +20,12 @@ import { assignmentWithinTolerance, denseToAssignment } from "./graph"
 import { ViewerMap } from "./map"
 import type { MapColorMode } from "./mapColors"
 import ReComWorker from "./recom.worker?worker"
+import {
+  resultAssignment,
+  resultModeFromQuery,
+  resultStatus,
+  type ResultMode,
+} from "./resultMode"
 import type {
   AssignmentMap,
   ChainStatus,
@@ -85,6 +91,11 @@ app.innerHTML = `
 
       <section class="viewer-section" id="result-section" aria-labelledby="result-heading" hidden>
         <div class="section-heading"><span>04</span><h2 id="result-heading">Result</h2></div>
+        <fieldset class="result-mode-control">
+          <legend>Plan output</legend>
+          <div role="group" aria-label="Generated plan output"><button type="button" data-result-mode="sample" aria-pressed="true">Sample</button><button type="button" data-result-mode="optimized" aria-pressed="false">Optimize</button></div>
+          <small id="result-mode-help">Sample preserves the final neutral chain state.</small>
+        </fieldset>
         <div class="metric-grid metric-grid--two">
           <div class="metric"><span>Population</span><strong id="population-value">—</strong></div>
           <div class="metric"><span>Ideal / district</span><strong id="ideal-value">—</strong></div>
@@ -135,6 +146,8 @@ const elements = {
   partisanLegend: get("partisan-legend"),
   resolutionButtons: Array.from(document.querySelectorAll<HTMLButtonElement>("[data-resolution]")),
   resolutionHelp: get("resolution-help"),
+  resultModeButtons: Array.from(document.querySelectorAll<HTMLButtonElement>("[data-result-mode]")),
+  resultModeHelp: get("result-mode-help"),
   resultSeed: get("result-seed"), runLabel: get("run-label"), runPercent: get("run-percent"),
   runProgress: get("run-progress"), scoreGrid: get("score-grid"), seed: input("seed"),
   splits: get("splits-value"), state: select("state-select"), steps: input("steps"),
@@ -163,6 +176,7 @@ let loaded: LoadedState | null = null
 let viewerMap: ViewerMap | null = null
 let recomWorker: Worker | null = null
 let assignment: AssignmentMap | null = null
+let sampleAssignment: AssignmentMap | null = null
 let bestAssignment: AssignmentMap | null = null
 let frontierScores: PlanScore[] = []
 let lastStatus: ChainStatus | null = null
@@ -170,7 +184,14 @@ let analytics: PlanAnalytics | null = null
 let unitLookup = new Map<string, LoadedState["units"][number]>()
 let requestId = 0
 
+activateResultMode(setup.resultMode)
+
 elements.state.addEventListener("change", () => void loadSelectedState())
+for (const control of elements.resultModeButtons) {
+  control.addEventListener("click", () => {
+    activateResultMode(control.dataset.resultMode === "optimized" ? "optimized" : "sample")
+  })
+}
 for (const control of elements.mapColorButtons) {
   control.addEventListener("click", () => {
     const colorMode = control.dataset.mapColor === "partisanship" ? "partisanship" : "district"
@@ -217,6 +238,7 @@ async function loadSelectedState() {
   cancelGeneration()
   loaded = null
   assignment = null
+  sampleAssignment = null
   bestAssignment = null
   frontierScores = []
   lastStatus = null
@@ -280,11 +302,18 @@ async function generate() {
   }
   updateUrl()
   analytics = null
+  assignment = null
+  sampleAssignment = null
+  bestAssignment = null
+  frontierScores = []
+  lastStatus = null
   clearResult()
   setError(null)
 
   if (params.districts === 1) {
-    assignment = Object.fromEntries(loaded.graph.unitIds.map((unitId) => [unitId, 1]))
+    sampleAssignment = Object.fromEntries(loaded.graph.unitIds.map((unitId) => [unitId, 1]))
+    bestAssignment = sampleAssignment
+    assignment = sampleAssignment
     lastStatus = emptyStatus()
     finishPlan(params.seed)
     return
@@ -320,9 +349,10 @@ async function generate() {
       return
     }
     lastStatus = response.status
-    assignment = denseToAssignment(loaded?.graph.unitIds ?? [], response.assignment)
+    sampleAssignment = denseToAssignment(loaded?.graph.unitIds ?? [], response.assignment)
     bestAssignment = denseToAssignment(loaded?.graph.unitIds ?? [], response.bestAssignment)
     frontierScores = response.frontier
+    assignment = resultAssignment(currentResultMode(), sampleAssignment, bestAssignment)
     finishPlan(params.seed)
   }
   worker.onerror = (event) => {
@@ -365,13 +395,14 @@ async function generate() {
   worker.postMessage(request, transfers)
 }
 
-function finishPlan(seed: bigint) {
+function finishPlan(seed: bigint, openAnalytics = true) {
   if (!loaded || !assignment || !lastStatus) return
+  const selectedStatus = resultStatus(currentResultMode(), lastStatus)
   analytics = computeAnalytics(
     loaded.units,
     assignment,
     loaded.manifest.counts.districts,
-    lastStatus,
+    selectedStatus,
   )
   viewerMap?.setAssignment(
     assignment,
@@ -381,9 +412,9 @@ function finishPlan(seed: bigint) {
     (control) => control.dataset.mapColor === "partisanship",
   )
   if (partisanControl) partisanControl.disabled = false
-  renderScore(lastStatus)
+  renderScore(selectedStatus)
   setProgress(100)
-  elements.runLabel.textContent = `${loaded.manifest.counts.districts}-district plan ready`
+  elements.runLabel.textContent = `${loaded.manifest.counts.districts}-district ${currentResultMode() === "optimized" ? "optimized" : "sample"} ready`
   elements.mapStatus.textContent = `${loaded.manifest.editUnit === "precinct" ? "Precincts" : "Block groups"} · generated plan`
   elements.generate.textContent = "Generate again"
   elements.population.textContent = Math.round(analytics.totalPopulation).toLocaleString()
@@ -393,7 +424,7 @@ function finishPlan(seed: bigint) {
   elements.resultSection.hidden = false
   elements.analyticsSubtitle.textContent = `${analytics.districts.length} districts · ${analytics.totalUnits.toLocaleString()} ${loaded.manifest.editUnit === "precinct" ? "precincts" : "block groups"} · census and 2024 presidential diagnostics`
   renderAnalytics("overview", analytics)
-  elements.analyticsPanel.hidden = false
+  if (openAnalytics) elements.analyticsPanel.hidden = false
 }
 
 function cancelGeneration() {
@@ -446,6 +477,7 @@ function readSetup() {
     attempts: boundedInteger(query.get("attempts") ?? "3", 1, 20),
     tolerance: boundedNumber(query.get("tolerance"), 0.5, 15, 5),
     county: boundedNumber(query.get("county"), 0, 50, 10),
+    resultMode: resultModeFromQuery(query.get("output")),
   }
 }
 
@@ -458,6 +490,7 @@ function updateUrl() {
   url.searchParams.set("attempts", elements.attempts.value)
   url.searchParams.set("tolerance", elements.tolerance.value)
   url.searchParams.set("county", elements.county.value)
+  url.searchParams.set("output", currentResultMode())
   history.replaceState(null, "", url)
 }
 
@@ -470,6 +503,7 @@ async function copySetup() {
 
 function downloadAssignment() {
   if (!loaded || !assignment || !lastStatus) return
+  const selectedStatus = resultStatus(currentResultMode(), lastStatus)
   const payload = {
     algorithm: "recom-core",
     algorithmVersion: "0.1.0",
@@ -483,7 +517,8 @@ function downloadAssignment() {
       populationTolerancePercent: Number(elements.tolerance.value),
       countySurcharge: Number(elements.county.value),
     },
-    status: lastStatus,
+    output: currentResultMode(),
+    status: selectedStatus,
     analytics,
     assignment,
     optimization: {
@@ -497,6 +532,28 @@ function downloadAssignment() {
   anchor.download = `${loaded.manifest.state.slug}-recom-${elements.seed.value}.json`
   anchor.click()
   URL.revokeObjectURL(url)
+}
+
+function activateResultMode(mode: ResultMode) {
+  for (const control of elements.resultModeButtons) {
+    control.setAttribute("aria-pressed", String(control.dataset.resultMode === mode))
+  }
+  elements.resultModeHelp.textContent = mode === "optimized"
+    ? "Optimize uses recom-scoring's deterministic Pareto selection."
+    : "Sample preserves the final neutral chain state."
+  if (sampleAssignment && bestAssignment && lastStatus) {
+    assignment = resultAssignment(mode, sampleAssignment, bestAssignment)
+    finishPlan(BigInt(elements.seed.value), false)
+  }
+  updateUrl()
+}
+
+function currentResultMode(): ResultMode {
+  return elements.resultModeButtons.find(
+    (control) => control.getAttribute("aria-pressed") === "true",
+  )?.dataset.resultMode === "optimized"
+    ? "optimized"
+    : "sample"
 }
 
 function renderHover(unitId: string | null) {

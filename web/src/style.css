@@ -98,9 +98,9 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   border: 0;
 }
 
-.resolution-control legend { margin-bottom: 7px; padding: 0; color: var(--muted); }
-.resolution-control > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.resolution-control button {
+.resolution-control legend, .result-mode-control legend { margin-bottom: 7px; padding: 0; color: var(--muted); }
+.resolution-control > div, .result-mode-control > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.resolution-control button, .result-mode-control button {
   min-height: 38px;
   border: 1px solid var(--border);
   border-radius: 3px 0 0 3px;
@@ -111,10 +111,12 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   letter-spacing: 0.035em;
   text-transform: uppercase;
 }
-.resolution-control button + button { border-left: 0; border-radius: 0 3px 3px 0; }
-.resolution-control button[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: var(--panel); }
-.resolution-control button:focus-visible { position: relative; z-index: 1; outline: 2px solid color-mix(in oklch, var(--accent) 24%, transparent); outline-offset: 1px; }
-.resolution-control small { min-height: 31px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.resolution-control button + button, .result-mode-control button + button { border-left: 0; border-radius: 0 3px 3px 0; }
+.resolution-control button[aria-pressed="true"], .result-mode-control button[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: var(--panel); }
+.resolution-control button:focus-visible, .result-mode-control button:focus-visible { position: relative; z-index: 1; outline: 2px solid color-mix(in oklch, var(--accent) 24%, transparent); outline-offset: 1px; }
+.resolution-control small, .result-mode-control small { min-height: 31px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+.result-mode-control { display: grid; gap: 7px; min-width: 0; margin: 0 0 12px; padding: 0; border: 0; }
 
 .field input, .field select {
   width: 100%;
@@ -399,7 +401,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   .viewer-map { order: -1; height: 48dvh; min-height: 340px; border-bottom: 1px solid var(--border); }
   .viewer-sidebar { overflow: visible; border-right: 0; }
   .viewer-header, .viewer-section, .viewer-footer { padding-right: 18px; padding-left: 18px; }
-  .field input, .field select, .input-action button, .resolution-control button, .map-color-control button, .button { min-height: 44px; }
+  .field input, .field select, .input-action button, .resolution-control button, .result-mode-control button, .map-color-control button, .button { min-height: 44px; }
   .input-action { grid-template-columns: minmax(0, 1fr) 44px; }
   .map-hover { right: 10px; bottom: 10px; left: 10px; width: auto; max-height: calc(100% - 60px); overflow-y: auto; }
   .analytics-panel { top: 8px; right: 8px; bottom: 8px; left: 8px; width: auto; min-width: 0; }
