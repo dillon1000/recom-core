@@ -1,6 +1,7 @@
 //! Runs the native ReCom implementation against a GerryChain-style node-link graph. Inputs are a
 //! graph JSON path, population and assignment attribute names, and chain parameters; output is one
-//! JSONL record for each accepted proposal so distributional comparisons can consume a stream.
+//! JSONL record for each accepted standard proposal or every reversible chain step so
+//! distributional comparisons preserve the latter's self-loop multiplicities.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -9,8 +10,8 @@ use std::{
     path::PathBuf,
 };
 
-use clap::Parser;
-use recom_core::{Chain, ChainParams, CsrGraph};
+use clap::{Parser, ValueEnum};
+use recom_core::{Chain, ChainParams, ChainStatus, CsrGraph, RecomVariant};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -40,6 +41,27 @@ struct Arguments {
     county_surcharge: u32,
     #[arg(long, default_value_t = 10)]
     tree_attempts: u32,
+    #[arg(long, value_enum, default_value_t = OracleVariant::CutEdgesRmst)]
+    variant: OracleVariant,
+    /// Reversible balance-edge upper bound M; must be greater than zero for reversible runs.
+    #[arg(long, default_value_t = 0)]
+    balance_ub: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OracleVariant {
+    #[value(name = "cut-edges-rmst")]
+    CutEdgesRmst,
+    Reversible,
+}
+
+impl From<OracleVariant> for RecomVariant {
+    fn from(variant: OracleVariant) -> Self {
+        match variant {
+            OracleVariant::CutEdgesRmst => Self::CutEdgesRmst,
+            OracleVariant::Reversible => Self::Reversible,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -75,6 +97,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tree_attempts: arguments.tree_attempts,
             burst_length: 0,
             frozen_districts: Vec::new(),
+            variant: arguments.variant.into(),
+            balance_ub: arguments.balance_ub,
         },
         Some(assignment),
     )?;
@@ -83,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for step in 1..=arguments.steps {
         let before = chain.status().steps_accepted;
         let status = chain.step(1);
-        if status.steps_accepted > before {
+        if should_emit_sample(arguments.variant, before, status) {
             serde_json::to_writer(
                 &mut output,
                 &OracleRecord {
@@ -101,6 +125,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     output.flush()?;
     Ok(())
+}
+
+fn should_emit_sample(variant: OracleVariant, accepted_before: u32, status: ChainStatus) -> bool {
+    variant == OracleVariant::Reversible || status.steps_accepted > accepted_before
 }
 
 type ParsedGraph = (CsrGraph, Vec<u32>, Vec<u16>, u16);
@@ -366,5 +394,25 @@ mod tests {
             ]
         });
         assert!(parse_graph(&document, "population", "district", None, Some("meters"),).is_err());
+    }
+
+    #[test]
+    fn reversible_oracle_preserves_self_loop_samples() {
+        let score = recom_core::PlanScore {
+            weighted_cut: 0,
+            county_fragments: 0,
+            county_splits: 0,
+            max_deviation_ppm: 0,
+        };
+        let status = ChainStatus {
+            steps_accepted: 7,
+            steps_rejected: 3,
+            burst_restarts: 0,
+            current_score: score,
+            best_score: score,
+            frontier_size: 1,
+        };
+        assert!(should_emit_sample(OracleVariant::Reversible, 7, status));
+        assert!(!should_emit_sample(OracleVariant::CutEdgesRmst, 7, status));
     }
 }

@@ -86,6 +86,49 @@ Aggregate cut-edge KS D was `0.011006`. Mean cut edges were `596.791133` for frc
 
 The runners both use one random-key Kruskal tree draw per proposal. This matches recom-core's settled tree sampler to frcw's RMST kernel while preserving different RNG streams, so only the post-burn-in distributions—not individual steps—are compared.
 
+## Reversible comparison
+
+Reversible ReCom gives both implementations the same spanning-tree stationary distribution. Use the same pinned graph, balanced `RECOM_SEED` assignment, seeds, tolerance, and 100,000 attempted steps described above, with `M = 40`. Run each pinned seed with:
+
+```bash
+/tmp/frcw.rs/target/release/frcw \
+  --graph-json /tmp/VA_precincts_balanced.json \
+  --assignment-col RECOM_SEED \
+  --n-steps 100000 \
+  --n-threads 1 \
+  --pop-col TOTPOP \
+  --rng-seed 20260712 \
+  --tol 0.01 \
+  --batch-size 1 \
+  --variant reversible \
+  --balance-ub 40 \
+  --writer jsonl \
+  --cut-edges-count > /tmp/frcw-reversible-20260712.jsonl
+
+target/release/oracle \
+  --graph-json /tmp/VA_precincts_balanced.json \
+  --pop-col TOTPOP \
+  --assignment-col RECOM_SEED \
+  --steps 100000 \
+  --tolerance 0.01 \
+  --seed 20260712 \
+  --variant reversible \
+  --balance-ub 40 > /tmp/ours-reversible-20260712.jsonl
+```
+
+The recom-core reversible oracle writes one record per attempted step, repeating the current plan on every self-loop. The pinned frcw JSONL stream writes accepted plans with their absolute step numbers; `--preserve-self-loops --steps 100000` expands those gaps and the final tail before burn-in and thinning. This multiplicity is part of the Markov chain and must not be removed or acceptance-thinned.
+
+Repeat both commands for the other pinned seeds, then compare:
+
+```bash
+python3 oracle/compare.py --preserve-self-loops --steps 100000 \
+  --frcw /tmp/frcw-reversible-20260712.jsonl --ours /tmp/ours-reversible-20260712.jsonl \
+  --frcw /tmp/frcw-reversible-94915664.jsonl --ours /tmp/ours-reversible-94915664.jsonl \
+  --frcw /tmp/frcw-reversible-8675309.jsonl --ours /tmp/ours-reversible-8675309.jsonl
+```
+
+Burn-in is the first 20% of attempted steps and thinning retains every tenth remaining attempted step. Because both samplers target the identical distribution, the reversible cut-edge and district-population histograms should agree more tightly than the RMST heuristic comparison. Record the per-seed and aggregate statistics here when the full manual run is performed.
+
 ## Optional scoring attributes
 
-The pinned frcw comparison intentionally omits county and perimeter attributes, preserving its historical cut-edge distribution. Other GerryChain node-link or adjacency-data inputs may add `--county-col <node attribute>` and `--edge-weight-attr <edge attribute>`. County values derive county-crossing flags and county regions; edge weights must be positive integers and must agree across reverse adjacency entries. Accepted-step JSONL keeps `step`, `cut_edges`, and `district_pops` while also emitting `weighted_cut`, `county_fragments`, `county_splits`, and `max_deviation_ppm` for offline baseline construction.
+The pinned frcw comparison intentionally omits county and perimeter attributes, preserving its historical cut-edge distribution. Other GerryChain node-link or adjacency-data inputs may add `--county-col <node attribute>` and `--edge-weight-attr <edge attribute>`. County values derive county-crossing flags and county regions; edge weights must be positive integers and must agree across reverse adjacency entries. Standard accepted-step and reversible attempted-step JSONL keep `step`, `cut_edges`, and `district_pops` while also emitting `weighted_cut`, `county_fragments`, `county_splits`, and `max_deviation_ppm` for offline baseline construction.

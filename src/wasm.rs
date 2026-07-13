@@ -5,7 +5,7 @@
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
-use crate::{Chain as CoreChain, ChainParams, CsrGraph, RecomError};
+use crate::{Chain as CoreChain, ChainParams, CsrGraph, RecomError, RecomVariant};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +21,10 @@ struct WasmChainParams {
     frozen_districts: Option<Vec<u16>>,
     #[serde(default)]
     initial_assignment: Option<Vec<u16>>,
+    #[serde(default)]
+    variant: Option<String>,
+    #[serde(default)]
+    balance_ub: Option<u32>,
 }
 
 #[wasm_bindgen]
@@ -41,6 +45,15 @@ impl Chain {
     ) -> Result<Chain, JsError> {
         let raw: WasmChainParams = serde_wasm_bindgen::from_value(params)
             .map_err(|error| JsError::new(&format!("invalid chain parameters: {error}")))?;
+        let variant = match raw.variant.as_deref().unwrap_or("cutEdgesRmst") {
+            "cutEdgesRmst" => RecomVariant::CutEdgesRmst,
+            "reversible" => RecomVariant::Reversible,
+            variant => {
+                return Err(JsError::new(&format!(
+                    "unknown ReCom variant {variant:?}; expected cutEdgesRmst or reversible"
+                )));
+            }
+        };
         if !raw.county_surcharge.is_finite()
             || raw.county_surcharge < 0.0
             || raw.county_surcharge.fract() != 0.0
@@ -92,6 +105,8 @@ impl Chain {
                 tree_attempts: raw.tree_attempts,
                 burst_length: raw.burst_length.unwrap_or_default(),
                 frozen_districts,
+                variant,
+                balance_ub: raw.balance_ub.unwrap_or_default(),
             },
             initial_assignment,
         )

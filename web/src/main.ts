@@ -47,6 +47,7 @@ import type {
   ChainStatus,
   PlanScore,
   ProposalTraceChunk,
+  RecomVariant,
   ViewerResolution,
   WorkerRequest,
   WorkerResponse,
@@ -107,13 +108,15 @@ app.innerHTML = `
       <section class="panel-section" aria-labelledby="parameters-heading">
         <div class="section-heading"><span>02</span><h2 id="parameters-heading">Parameters</h2></div>
         <label class="field"><span>Seed</span><div class="input-action"><input id="seed" inputmode="numeric" /><button id="random-seed" type="button" aria-label="Generate a random seed">${icons.dices}</button></div><small>Same state, seed, and controls produce the same plan.</small></label>
+        <label class="field"><span>Sampler</span><select id="sampler"><option value="cutEdgesRmst">Standard</option><option value="reversible">Reversible</option></select><small id="sampler-help">Standard ReCom is fast and intended for interactive plan generation.</small></label>
         <div class="control-grid">
           <label class="field"><span>Proposals</span><input id="steps" type="number" min="0" max="100000" step="100" /></label>
           <label class="field"><span>Tree attempts</span><input id="attempts" type="number" min="1" max="20" /></label>
-          <label class="field" title="Attempted proposals per neutral burst; 0 disables bursts."><span>Burst length</span><input id="burst" type="number" min="0" max="10000" step="5" title="0 disables bursts." /></label>
+          <label class="field" id="burst-field" title="Attempted proposals per neutral burst; 0 disables bursts."><span>Burst length</span><input id="burst" type="number" min="0" max="10000" step="5" title="0 disables bursts." /><small id="burst-help">Zero disables weighted-best restarts.</small></label>
         </div>
+        <label class="field" id="balance-field" hidden><span>Balance bound</span><input id="balance" type="number" min="1" max="100000" step="1" /><small>Maximum balanced tree edges per reversible proposal (M).</small></label>
         <label class="range-field"><span><span>Population tolerance</span><output id="tolerance-output">5.0%</output></span><input id="tolerance" type="range" min="0.5" max="15" step="0.5" /></label>
-        <label class="range-field"><span><span>County preservation</span><output id="county-output">10</output></span><input id="county" type="range" min="0" max="50" step="1" /><small>Biases proposals toward county boundaries and weights county fragments when Optimize selects a plan.</small></label>
+        <label class="range-field" id="county-field"><span><span>County preservation</span><output id="county-output">10</output></span><input id="county" type="range" min="0" max="50" step="1" /><small id="county-help">Biases proposals toward county boundaries and weights county fragments when Optimize selects a plan.</small></label>
       </section>
 
       <section class="panel-section" aria-labelledby="generation-heading">
@@ -179,11 +182,12 @@ app.innerHTML = `
 `
 
 const elements = {
-  accepted: get("accepted-value"), attempts: input("attempts"), burst: input("burst"), copy: button("copy"),
+  accepted: get("accepted-value"), attempts: input("attempts"), balance: input("balance"),
+  balanceField: get("balance-field"), burst: input("burst"), burstHelp: get("burst-help"), copy: button("copy"),
   analyticsBody: get("analytics-body"), analyticsPanel: get("analytics-panel"),
   analyticsSubtitle: get("analytics-subtitle"), analyticsTabs: get("analytics-tabs"),
   closeAnalytics: button("close-analytics"),
-  county: input("county"), countyOutput: get("county-output"), cut: get("cut-value"),
+  county: input("county"), countyHelp: get("county-help"), countyOutput: get("county-output"), cut: get("cut-value"),
   deviation: get("deviation-value"), districts: get("districts-value"), download: button("download"),
   edges: get("edges-value"), error: get("error"), generate: button("generate"),
   generationNote: get("generation-note"), ideal: get("ideal-value"), islandNote: get("island-note"),
@@ -201,6 +205,7 @@ const elements = {
   resultModeHelp: get("result-mode-help"),
   resultSeed: get("result-seed"), runLabel: get("run-label"), runPercent: get("run-percent"),
   runProgress: get("run-progress"), scoreGrid: get("score-grid"), seed: input("seed"),
+  sampler: select("sampler"), samplerHelp: get("sampler-help"),
   splits: get("splits-value"), state: select("state-select"), steps: input("steps"),
   telemetry: get("telemetry"),
   tolerance: input("tolerance"), toleranceOutput: get("tolerance-output"), units: get("units-value"),
@@ -224,9 +229,12 @@ activateResolution(setup.resolution)
 elements.seed.value = setup.seed
 elements.steps.value = String(setup.steps)
 elements.attempts.value = String(setup.attempts)
+elements.sampler.value = setup.variant
+elements.balance.value = String(setup.balance)
 elements.burst.value = String(setup.burst)
 elements.tolerance.value = String(setup.tolerance)
 elements.county.value = String(setup.county)
+syncSamplerControls()
 syncRangeLabels()
 
 let loaded: LoadedState | null = null
@@ -294,6 +302,10 @@ for (const control of elements.resolutionButtons) {
 }
 elements.tolerance.addEventListener("input", syncRangeLabels)
 elements.county.addEventListener("input", syncRangeLabels)
+elements.sampler.addEventListener("change", () => {
+  syncSamplerControls()
+  syncRangeLabels()
+})
 elements.randomSeed.addEventListener("click", () => { elements.seed.value = randomSeed() })
 elements.generate.addEventListener("click", () => {
   if (recomWorker) cancelGeneration()
@@ -598,6 +610,7 @@ function clearResult() {
 function readControls(districts: number) {
   const seed = BigInt(elements.seed.value)
   if (seed < 0n || seed > 0xffff_ffff_ffff_ffffn) throw new Error("Seed must fit an unsigned 64-bit integer.")
+  const variant = currentVariant()
   return {
     districts,
     seed,
@@ -606,6 +619,10 @@ function readControls(districts: number) {
     burstLength: boundedInteger(elements.burst.value, 0, 10_000),
     popTolerance: Number(elements.tolerance.value) / 100,
     countySurcharge: Number(elements.county.value),
+    variant,
+    balanceUb: variant === "reversible"
+      ? boundedInteger(elements.balance.value, 1, 100_000)
+      : 0,
   }
 }
 
@@ -618,6 +635,8 @@ function readSetup() {
     seed: /^\d+$/.test(query.get("seed") ?? "") ? query.get("seed") ?? "42" : "42",
     steps: boundedInteger(query.get("steps") ?? "200", 0, 100_000),
     attempts: boundedInteger(query.get("attempts") ?? "3", 1, 20),
+    variant: variantFromQuery(query.get("variant")),
+    balance: boundedInteger(query.get("balance") ?? "40", 1, 100_000),
     burst: boundedInteger(query.get("burst") ?? "0", 0, 10_000),
     tolerance: boundedNumber(query.get("tolerance"), 0.5, 15, 5),
     county: boundedNumber(query.get("county"), 0, 50, 10),
@@ -632,6 +651,8 @@ function updateUrl() {
   url.searchParams.set("seed", elements.seed.value)
   url.searchParams.set("steps", elements.steps.value)
   url.searchParams.set("attempts", elements.attempts.value)
+  url.searchParams.set("variant", currentVariant())
+  url.searchParams.set("balance", elements.balance.value)
   url.searchParams.set("burst", elements.burst.value)
   url.searchParams.set("tolerance", elements.tolerance.value)
   url.searchParams.set("county", elements.county.value)
@@ -923,6 +944,10 @@ function downloadAssignment() {
       seed: elements.seed.value,
       steps: Number(elements.steps.value),
       treeAttempts: Number(elements.attempts.value),
+      variant: currentVariant(),
+      balanceUb: currentVariant() === "reversible"
+        ? boundedInteger(elements.balance.value, 1, 100_000)
+        : 0,
       burstLength: boundedInteger(elements.burst.value, 0, 10_000),
       populationTolerancePercent: Number(elements.tolerance.value),
       countySurcharge: Number(elements.county.value),
@@ -1152,6 +1177,33 @@ function syncRangeLabels() {
   }
 }
 
+function syncSamplerControls() {
+  const reversible = currentVariant() === "reversible"
+  elements.balanceField.hidden = !reversible
+  elements.balance.disabled = !reversible
+  elements.burst.disabled = reversible
+  elements.county.disabled = reversible
+  if (reversible) {
+    elements.burst.value = "0"
+    elements.county.value = "0"
+    elements.samplerHelp.textContent = "Reversible ReCom targets the exact spanning-tree distribution but needs far more proposals because self-loops dominate."
+    elements.burstHelp.textContent = "Reversible chains cannot use weighted-best restarts."
+    elements.countyHelp.textContent = "Reversible chains require unbiased uniform spanning trees."
+  } else {
+    elements.samplerHelp.textContent = "Standard ReCom is fast and intended for interactive plan generation."
+    elements.burstHelp.textContent = "Zero disables weighted-best restarts."
+    elements.countyHelp.textContent = "Biases proposals toward county boundaries and weights county fragments when Optimize selects a plan."
+  }
+}
+
+function currentVariant(): RecomVariant {
+  return elements.sampler.value === "reversible" ? "reversible" : "cutEdgesRmst"
+}
+
+function variantFromQuery(value: string | null): RecomVariant {
+  return value === "reversible" ? "reversible" : "cutEdgesRmst"
+}
+
 function activateMapColorMode(colorMode: MapColorMode) {
   for (const control of elements.mapColorButtons) {
     control.setAttribute("aria-pressed", String(control.dataset.mapColor === colorMode))
@@ -1191,10 +1243,11 @@ function setControls(enabled: boolean) {
 }
 
 function setFormDisabled(disabled: boolean) {
-  for (const control of [elements.state, elements.seed, elements.steps, elements.attempts, elements.burst, elements.tolerance, elements.county, elements.randomSeed]) {
+  for (const control of [elements.state, elements.seed, elements.steps, elements.attempts, elements.sampler, elements.balance, elements.burst, elements.tolerance, elements.county, elements.randomSeed]) {
     control.disabled = disabled
   }
   for (const control of elements.resolutionButtons) control.disabled = disabled
+  if (!disabled) syncSamplerControls()
 }
 
 type TelemetryState = "loading" | "ready" | "running" | "done" | "failed"

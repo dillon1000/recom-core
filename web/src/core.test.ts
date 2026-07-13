@@ -93,7 +93,100 @@ describe("recom-core WASM scoring contract", () => {
     )
     chain.free()
   })
+
+  it("runs reversible proposals with explicit self-loop outcomes", () => {
+    const width = 4
+    const height = 8
+    const graph = gridGraph(width, height)
+    const initialAssignment = Uint16Array.from(
+      { length: width * height },
+      (_, node) => Math.floor(node / (width * 2)) + 1,
+    )
+    const chain = new Chain(
+      graph.offsets,
+      graph.neighbors,
+      new Uint8Array(graph.neighbors.length),
+      null,
+      new Uint32Array(width * height).fill(1),
+      {
+        districts: 4,
+        seed: 0x5eed_2026n,
+        popTolerance: 0.25,
+        countySurcharge: 0,
+        treeAttempts: 1,
+        burstLength: 0,
+        variant: "reversible",
+        balanceUb: 1,
+        frozenDistricts: new Uint16Array(),
+        initialAssignment,
+      },
+    )
+
+    const batch = chain.step_traced(5_000) as ProposalTraceBatch
+    const outcomes = new Set(batch.proposals.map((proposal) => proposal.outcome))
+    expect(outcomes).toContain("nonAdjacentPair")
+    expect(outcomes).toContain("balanceBoundExceeded")
+    expect(outcomes).toContain("seamRejected")
+    expect(outcomes).toContain("accepted")
+    expectGridAssignmentValid(chain.assignment(), graph, 4, 0.25)
+    chain.free()
+  })
 })
+
+function gridGraph(width: number, height: number) {
+  const rows = Array.from({ length: width * height }, () => [] as number[])
+  const connect = (a: number, b: number) => {
+    rows[a]?.push(b)
+    rows[b]?.push(a)
+  }
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const node = y * width + x
+      if (x + 1 < width) connect(node, node + 1)
+      if (y + 1 < height) connect(node, node + width)
+    }
+  }
+  const offsets = [0]
+  const neighbors: number[] = []
+  for (const row of rows) {
+    row.sort((a, b) => a - b)
+    neighbors.push(...row)
+    offsets.push(neighbors.length)
+  }
+  return {
+    offsets: Uint32Array.from(offsets),
+    neighbors: Uint32Array.from(neighbors),
+    rows,
+  }
+}
+
+function expectGridAssignmentValid(
+  assignment: Uint16Array,
+  graph: ReturnType<typeof gridGraph>,
+  districts: number,
+  tolerance: number,
+) {
+  const ideal = assignment.length / districts
+  for (let district = 1; district <= districts; district += 1) {
+    const nodes = [...assignment]
+      .map((label, node) => ({ label, node }))
+      .filter(({ label }) => label === district)
+      .map(({ node }) => node)
+    expect(nodes.length).toBeGreaterThanOrEqual(ideal * (1 - tolerance))
+    expect(nodes.length).toBeLessThanOrEqual(ideal * (1 + tolerance))
+    const remaining = new Set(nodes)
+    const stack = [nodes[0] ?? -1]
+    remaining.delete(stack[0] ?? -1)
+    while (stack.length > 0) {
+      const node = stack.pop()
+      if (node === undefined) continue
+      for (const neighbor of graph.rows[node] ?? []) {
+        if (remaining.delete(neighbor)) stack.push(neighbor)
+      }
+    }
+    expect(remaining.size).toBe(0)
+  }
+}
 
 function createBurstChain() {
   return new Chain(

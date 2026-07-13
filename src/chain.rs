@@ -11,15 +11,22 @@ use recom_scoring::{
 use serde::Serialize;
 
 use crate::{
-    cut::choose_balanced_cut,
+    cut::{balanced_cut_candidates, choose_balanced_cut, choose_reversible_cut},
     graph::CsrGraph,
     partition::{Partition, PopulationBounds},
     rebalance::{rebalance_partition, RebalanceStatus},
     rng::ChainRng,
     seed::generate_seed_assignment,
-    tree::random_spanning_tree,
+    tree::{random_spanning_tree, uniform_spanning_tree},
     RecomError,
 };
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RecomVariant {
+    #[default]
+    CutEdgesRmst,
+    Reversible,
+}
 
 #[derive(Debug, Clone)]
 pub struct ChainParams {
@@ -30,6 +37,8 @@ pub struct ChainParams {
     pub tree_attempts: u32,
     pub burst_length: u32,
     pub frozen_districts: Vec<u16>,
+    pub variant: RecomVariant,
+    pub balance_ub: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -52,6 +61,9 @@ pub enum ProposalOutcome {
     NoEligibleBoundary,
     NoSpanningTree,
     NoBalancedCut,
+    NonAdjacentPair,
+    BalanceBoundExceeded,
+    SeamRejected,
 }
 
 /// Metadata for one proposal or burst restart. State changes occupy the declared range in the
@@ -96,6 +108,8 @@ pub struct Chain {
     county_surcharge: u32,
     selection_weights: SelectionWeights,
     tree_attempts: u32,
+    variant: RecomVariant,
+    balance_ub: u32,
     burst_length: u32,
     steps_since_restart: u32,
     burst_restarts: u32,
@@ -138,6 +152,34 @@ impl Chain {
                 "frozen district contains an out-of-range district",
             ));
         }
+        match params.variant {
+            RecomVariant::CutEdgesRmst if params.balance_ub != 0 => {
+                return Err(RecomError::new(
+                    "balance_ub is only valid for the reversible variant",
+                ));
+            }
+            RecomVariant::Reversible if params.balance_ub == 0 => {
+                return Err(RecomError::new(
+                    "balance_ub must be greater than zero for the reversible variant",
+                ));
+            }
+            RecomVariant::Reversible if params.county_surcharge > 0 => {
+                return Err(RecomError::new(
+                    "reversible variant does not support county preservation",
+                ));
+            }
+            RecomVariant::Reversible if params.burst_length > 0 => {
+                return Err(RecomError::new(
+                    "reversible variant does not support burst restarts",
+                ));
+            }
+            RecomVariant::Reversible if !params.frozen_districts.is_empty() => {
+                return Err(RecomError::new(
+                    "reversible variant does not support frozen districts",
+                ));
+            }
+            _ => {}
+        }
         let total_population = populations.iter().map(|value| u64::from(*value)).sum();
         let bounds =
             PopulationBounds::new(total_population, params.districts, params.pop_tolerance)?;
@@ -162,6 +204,8 @@ impl Chain {
             county_surcharge: params.county_surcharge,
             selection_weights: SelectionWeights::for_county_preservation(params.county_surcharge),
             tree_attempts: params.tree_attempts,
+            variant: params.variant,
+            balance_ub: params.balance_ub,
             burst_length: params.burst_length,
             steps_since_restart: 0,
             burst_restarts: 0,
@@ -291,6 +335,13 @@ impl Chain {
 
     fn step_once(&mut self) -> StepTrace {
         self.steps_since_restart = self.steps_since_restart.saturating_add(1);
+        match self.variant {
+            RecomVariant::CutEdgesRmst => self.step_once_cut_edges_rmst(),
+            RecomVariant::Reversible => self.step_once_reversible(),
+        }
+    }
+
+    fn step_once_cut_edges_rmst(&mut self) -> StepTrace {
         let eligible_edges = self
             .partition
             .cut_edges()
@@ -368,6 +419,79 @@ impl Chain {
         }
     }
 
+    fn step_once_reversible(&mut self) -> StepTrace {
+        let district_count = self.bounds.districts() as usize;
+        let pair_count = district_count * (district_count - 1) / 2;
+        let (district_a, district_b) =
+            district_pair(self.rng.index(pair_count), self.bounds.districts());
+        let adjacent = self.partition.cut_edges().iter().any(|edge_index| {
+            let edge = self.graph.edges()[*edge_index as usize];
+            let edge_a = self.partition.assignment()[edge.a as usize];
+            let edge_b = self.partition.assignment()[edge.b as usize];
+            (edge_a == district_a && edge_b == district_b)
+                || (edge_a == district_b && edge_b == district_a)
+        });
+        if !adjacent {
+            return self.reject(ProposalOutcome::NonAdjacentPair);
+        }
+
+        let Some(tree) = uniform_spanning_tree(
+            &self.graph,
+            self.partition.assignment(),
+            district_a,
+            district_b,
+            &mut self.rng,
+        ) else {
+            return self.reject(ProposalOutcome::NoSpanningTree);
+        };
+        let Some(candidates) = balanced_cut_candidates(&tree, &self.populations, self.bounds)
+        else {
+            return self.reject(ProposalOutcome::NoBalancedCut);
+        };
+        if candidates.len() > self.balance_ub as usize {
+            return self.reject(ProposalOutcome::BalanceBoundExceeded);
+        }
+
+        let proposal = choose_reversible_cut(
+            &self.graph,
+            &tree,
+            self.partition.assignment(),
+            district_a,
+            district_b,
+            &candidates,
+            &mut self.rng,
+        );
+        debug_assert!(proposal.seam_length > 0);
+        let denominator = proposal.seam_length * u64::from(self.balance_ub);
+        if !self.rng.accept(proposal.n_splits, denominator) {
+            return self.reject(ProposalOutcome::SeamRejected);
+        }
+
+        let changes = proposal
+            .changes
+            .into_iter()
+            .filter(|(node, district)| self.partition.assignment()[*node as usize] != *district)
+            .collect::<Vec<_>>();
+        self.partition
+            .apply_assignment_changes(&self.graph, &self.populations, &changes);
+        self.steps_accepted += 1;
+        let frontier_changed = self.update_scores();
+        StepTrace {
+            outcome: ProposalOutcome::Accepted,
+            changes,
+            frontier_changed,
+        }
+    }
+
+    fn reject(&mut self, outcome: ProposalOutcome) -> StepTrace {
+        self.steps_rejected += 1;
+        StepTrace {
+            outcome,
+            changes: Vec::new(),
+            frontier_changed: false,
+        }
+    }
+
     fn maybe_restart(&mut self) -> Option<Vec<(u32, u16)>> {
         if self.burst_length == 0 || self.steps_since_restart < self.burst_length {
             return None;
@@ -404,4 +528,15 @@ impl Chain {
         self.frontier
             .insert(self.current_score, self.partition.assignment().to_vec())
     }
+}
+
+fn district_pair(mut index: usize, districts: u16) -> (u16, u16) {
+    for district_a in 0..districts - 1 {
+        let following = (districts - district_a - 1) as usize;
+        if index < following {
+            return (district_a, district_a + 1 + index as u16);
+        }
+        index -= following;
+    }
+    unreachable!("district pair index is bounded by the pair count")
 }

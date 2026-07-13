@@ -2,8 +2,9 @@
 """Compare thinned post-burn-in frcw and recom-core JSONL distributions.
 
 Inputs are paired frcw JSONL streams and recom-core oracle streams. The script reconstructs frcw's
-full district-population vector from its two-district updates, applies the documented 20% burn-in
-and 10-step thinning, then reports exact two-sample KS D statistics and cut-edge mean agreement.
+full district-population vector from its two-district updates, optionally expands reversible
+self-loops, applies the documented 20% burn-in and 10-step thinning, then reports exact two-sample
+KS D statistics and cut-edge mean agreement.
 """
 
 from __future__ import annotations
@@ -45,6 +46,16 @@ def parse_arguments() -> argparse.Namespace:
         type=Path,
         help="recom-core oracle JSONL path; repeat in matching seed order",
     )
+    parser.add_argument(
+        "--preserve-self-loops",
+        action="store_true",
+        help="expand frcw reversible samples to one record per attempted chain step",
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        help="attempted steps per chain; required with --preserve-self-loops",
+    )
     return parser.parse_args()
 
 
@@ -52,12 +63,20 @@ def main() -> int:
     arguments = parse_arguments()
     if len(arguments.frcw) != len(arguments.ours):
         raise SystemExit("--frcw and --ours must be supplied the same number of times")
+    if arguments.preserve_self_loops and (arguments.steps is None or arguments.steps <= 0):
+        raise SystemExit("--steps must be positive when --preserve-self-loops is set")
 
     aggregate_frcw: list[Sample] = []
     aggregate_ours: list[Sample] = []
     all_cut_ks_pass = True
     for index, (frcw_path, ours_path) in enumerate(zip(arguments.frcw, arguments.ours), start=1):
-        frcw_samples = thin_after_burn_in(load_frcw(frcw_path))
+        frcw_samples = thin_after_burn_in(
+            load_frcw(
+                frcw_path,
+                preserve_self_loops=arguments.preserve_self_loops,
+                total_steps=arguments.steps,
+            ),
+        )
         ours_samples = thin_after_burn_in(load_ours(ours_path))
         aggregate_frcw.extend(frcw_samples)
         aggregate_ours.extend(ours_samples)
@@ -105,28 +124,53 @@ def main() -> int:
     return 0 if overall_pass else 1
 
 
-def load_frcw(path: Path) -> list[Sample]:
+def load_frcw(
+    path: Path,
+    *,
+    preserve_self_loops: bool = False,
+    total_steps: int | None = None,
+) -> list[Sample]:
     district_pops: list[int] | None = None
     samples: list[Sample] = []
+    current: Sample | None = None
+    last_step = 0
     for record in json_lines(path):
         if "init" in record:
             district_pops = [int(value) for value in record["init"]["populations"]]
+            if preserve_self_loops:
+                current = Sample(
+                    cut_edges=int(record["init"]["num_cut_edges"]),
+                    district_pops=tuple(district_pops),
+                )
             continue
         if "step" not in record:
             continue
         if district_pops is None:
             raise ValueError(f"{path} contains a step before its init record")
         step = record["step"]
+        accepted_step = int(step["step"])
+        if preserve_self_loops:
+            if current is None:
+                raise ValueError(f"{path} init record is missing num_cut_edges")
+            if accepted_step <= last_step:
+                raise ValueError(f"{path} contains non-monotonic step numbers")
+            if total_steps is not None and accepted_step > total_steps:
+                break
+            samples.extend([current] * (accepted_step - last_step - 1))
         district_a, district_b = (int(value) for value in step["dists"])
         population_a, population_b = (int(value) for value in step["populations"])
         district_pops[district_a] = population_a
         district_pops[district_b] = population_b
-        samples.append(
-            Sample(
-                cut_edges=int(step["num_cut_edges"]),
-                district_pops=tuple(district_pops),
-            ),
+        current = Sample(
+            cut_edges=int(step["num_cut_edges"]),
+            district_pops=tuple(district_pops),
         )
+        samples.append(current)
+        last_step = accepted_step
+    if preserve_self_loops and total_steps is not None:
+        if current is None:
+            raise ValueError(f"{path} contains no initial sample")
+        samples.extend([current] * (total_steps - last_step))
     return require_samples(path, samples)
 
 
