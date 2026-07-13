@@ -11,7 +11,7 @@
     "lint": "eslint web/src worker vite.config.ts",
     "test": "pnpm wasm:build && vitest run && pnpm test:worker",
     "test:worker": "vitest run --root . worker/index.test.ts",
-    "check": "cargo test --workspace --all-features && cargo clippy --workspace --all-targets --all-features -- -D warnings && pnpm typecheck && pnpm lint && pnpm test && pnpm build"
+    "check": "cargo test --workspace --all-features && cargo clippy --workspace --all-targets --all-features -- -D warnings && pnpm wasm:build && pnpm typecheck && pnpm lint && pnpm test && pnpm build"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.9",
