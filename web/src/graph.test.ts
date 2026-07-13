@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import { assignmentToDense, buildGraph, connectComponents } from "./graph"
+import {
+  assignmentToDense,
+  assignmentWithinTolerance,
+  buildGraph,
+  connectComponents,
+} from "./graph"
 
 describe("public viewer graph adapter", () => {
   it("links graph islands and disconnected starting districts deterministically", () => {
@@ -30,6 +35,15 @@ describe("public viewer graph adapter", () => {
     expect([...graph.neighbors]).toEqual([1, 0])
     expect([...graph.edgeCountyCross]).toEqual([1, 1])
     expect([...graph.populations]).toEqual([10, 20])
+  })
+
+  it("rejects a published assignment outside the requested tolerance", () => {
+    const units = [
+      unit("a", "001", 48), unit("b", "001", 52),
+      unit("c", "003", 60), unit("d", "003", 40),
+    ]
+    expect(assignmentWithinTolerance(units, new Uint16Array([1, 1, 2, 2]), 2, 0.05)).toBe(true)
+    expect(assignmentWithinTolerance(units, new Uint16Array([1, 2, 2, 2]), 2, 0.05)).toBe(false)
   })
 })
 

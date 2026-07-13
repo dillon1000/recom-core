@@ -7,12 +7,25 @@
 import "./style.css"
 
 import { computeAnalytics, demographicKeys, type PlanAnalytics } from "./analytics"
-import { states, stateBySlug } from "./catalog"
+import {
+  datasetSlug,
+  resolutionFromQuery,
+  resolutionLabel,
+  states,
+  stateBySlug,
+  viewerResolutions,
+} from "./catalog"
 import { loadState, type LoadedState } from "./data"
-import { denseToAssignment } from "./graph"
+import { assignmentWithinTolerance, denseToAssignment } from "./graph"
 import { ViewerMap } from "./map"
 import ReComWorker from "./recom.worker?worker"
-import type { AssignmentMap, ChainStatus, WorkerRequest, WorkerResponse } from "./types"
+import type {
+  AssignmentMap,
+  ChainStatus,
+  ViewerResolution,
+  WorkerRequest,
+  WorkerResponse,
+} from "./types"
 
 const app = document.querySelector<HTMLElement>("#app")
 if (!app) throw new Error("The viewer root is missing.")
@@ -23,14 +36,19 @@ app.innerHTML = `
       <header class="viewer-header">
         <div class="viewer-eyebrow"><span class="viewer-mark">AR</span><span>RECOM-CORE / PUBLIC VIEWER</span></div>
         <h1>Auto-redistricter</h1>
-        <p>Generate contiguous, population-balanced congressional plans locally in your browser. No account, upload, or server compute.</p>
+        <p>Generate contiguous, population-balanced congressional plans from census block groups or authentic precinct boundaries. No account, upload, or server compute.</p>
       </header>
 
       <section class="viewer-section" aria-labelledby="dataset-heading">
         <div class="section-heading"><span>01</span><h2 id="dataset-heading">Dataset</h2></div>
+        <fieldset class="resolution-control">
+          <legend>Geography</legend>
+          <div>${viewerResolutions.map((resolution) => `<button type="button" data-resolution="${resolution}" aria-pressed="false">${resolution === "precinct" ? "Precincts" : "Block groups"}</button>`).join("")}</div>
+          <small id="resolution-help"></small>
+        </fieldset>
         <label class="field"><span>State</span><select id="state-select"></select></label>
         <div class="metric-grid metric-grid--three">
-          <div class="metric"><span>Units</span><strong id="units-value">—</strong></div>
+          <div class="metric"><span id="units-label">Block groups</span><strong id="units-value">—</strong></div>
           <div class="metric"><span>Districts</span><strong id="districts-value">—</strong></div>
           <div class="metric"><span>Adj. edges</span><strong id="edges-value">—</strong></div>
         </div>
@@ -106,10 +124,13 @@ const elements = {
   mapState: get("map-state"), mapStatus: get("map-status"), population: get("population-value"),
   randomSeed: button("random-seed"), rejected: get("rejected-value"), resultSection: get("result-section"),
   openAnalytics: button("open-analytics"),
+  resolutionButtons: Array.from(document.querySelectorAll<HTMLButtonElement>("[data-resolution]")),
+  resolutionHelp: get("resolution-help"),
   resultSeed: get("result-seed"), runLabel: get("run-label"), runPercent: get("run-percent"),
   runProgress: get("run-progress"), scoreGrid: get("score-grid"), seed: input("seed"),
   splits: get("splits-value"), state: select("state-select"), steps: input("steps"),
   tolerance: input("tolerance"), toleranceOutput: get("tolerance-output"), units: get("units-value"),
+  unitsLabel: get("units-label"),
 }
 
 for (const state of states) {
@@ -121,6 +142,7 @@ for (const state of states) {
 
 const setup = readSetup()
 elements.state.value = setup.state
+activateResolution(setup.resolution)
 elements.seed.value = setup.seed
 elements.steps.value = String(setup.steps)
 elements.attempts.value = String(setup.attempts)
@@ -138,6 +160,12 @@ let unitLookup = new Map<string, LoadedState["units"][number]>()
 let requestId = 0
 
 elements.state.addEventListener("change", () => void loadSelectedState())
+for (const control of elements.resolutionButtons) {
+  control.addEventListener("click", () => {
+    activateResolution(control.dataset.resolution === "precinct" ? "precinct" : "block-group")
+    void loadSelectedState()
+  })
+}
 elements.tolerance.addEventListener("input", syncRangeLabels)
 elements.county.addEventListener("input", syncRangeLabels)
 elements.randomSeed.addEventListener("click", () => { elements.seed.value = randomSeed() })
@@ -167,6 +195,8 @@ window.addEventListener("keydown", (event) => {
 void loadSelectedState()
 
 async function loadSelectedState() {
+  const resolution = currentResolution()
+  const selectedDataset = datasetSlug(elements.state.value, resolution)
   cancelGeneration()
   loaded = null
   assignment = null
@@ -182,17 +212,18 @@ async function loadSelectedState() {
   elements.loadLabel.textContent = "Loading manifest"
   elements.runLabel.textContent = "Loading data"
   elements.mapState.textContent = stateBySlug.get(elements.state.value)?.name ?? "State"
-  elements.mapStatus.textContent = "Loading authentic geography"
+  elements.mapStatus.textContent = `Loading ${resolutionLabel(resolution).toLowerCase()}`
+  elements.unitsLabel.textContent = resolution === "precinct" ? "Precincts" : "Block groups"
   elements.units.textContent = "—"
   elements.districts.textContent = "—"
   elements.edges.textContent = "—"
   updateUrl()
 
   try {
-    const bundle = await loadState(elements.state.value, (phase) => {
+    const bundle = await loadState(selectedDataset, (phase) => {
       elements.loadLabel.textContent = phase
     })
-    if (bundle.manifest.state.slug !== elements.state.value) return
+    if (bundle.manifest.state.slug !== datasetSlug(elements.state.value, currentResolution())) return
     loaded = bundle
     unitLookup = new Map(bundle.units.map((unit) => [unit.unitId, unit]))
     elements.units.textContent = bundle.manifest.counts.units.toLocaleString()
@@ -202,13 +233,13 @@ async function loadSelectedState() {
     elements.islandNote.hidden = bundle.virtualEdges === 0
     elements.islandNote.textContent = `${bundle.virtualEdges.toLocaleString()} deterministic virtual island link${bundle.virtualEdges === 1 ? "" : "s"} added, preferring units in the same reference district.`
     elements.mapState.textContent = bundle.manifest.state.stateName
-    elements.mapStatus.textContent = "Awaiting generation"
+    elements.mapStatus.textContent = `${resolution === "precinct" ? "Precincts" : "Block groups"} · awaiting generation`
     viewerMap = new ViewerMap(elements.map, bundle.manifest, renderHover)
     setControls(true)
     elements.runLabel.textContent = "Ready to generate"
     elements.generationNote.textContent = bundle.manifest.counts.districts === 1
-      ? `${bundle.manifest.state.stateName} is at-large, so generation assigns every unit to District 1.`
-      : "ReCom starts from the published reference assignment, then advances the seeded proposal chain entirely inside a Web Worker."
+      ? `${bundle.manifest.state.stateName} is at-large, so generation assigns every ${resolution === "precinct" ? "precinct" : "block group"} to District 1.`
+      : `ReCom reuses the published ${resolutionLabel(resolution).toLowerCase()} reference assignment when it satisfies the selected tolerance. Otherwise it deterministically seeds a balanced contiguous plan before advancing the proposal chain.`
   } catch (error) {
     setError(message(error))
     elements.loadLabel.textContent = "Dataset failed"
@@ -288,15 +319,24 @@ async function generate() {
       offsets: graph.offsets.slice().buffer,
       populations: graph.populations.slice().buffer,
     },
-    params: { ...params, initialAssignment: loaded.initialAssignment.slice().buffer },
+    params: {
+      ...params,
+      ...(assignmentWithinTolerance(
+        loaded.units,
+        loaded.initialAssignment,
+        params.districts,
+        params.popTolerance,
+      ) ? { initialAssignment: loaded.initialAssignment.slice().buffer } : {}),
+    },
   }
-  worker.postMessage(request, [
+  const transfers = [
     request.graph.edgeCountyCross,
     request.graph.neighbors,
     request.graph.offsets,
     request.graph.populations,
-    request.params.initialAssignment,
-  ])
+  ]
+  if (request.params.initialAssignment) transfers.push(request.params.initialAssignment)
+  worker.postMessage(request, transfers)
 }
 
 function finishPlan(seed: bigint) {
@@ -311,14 +351,14 @@ function finishPlan(seed: bigint) {
   renderScore(lastStatus)
   setProgress(100)
   elements.runLabel.textContent = `${loaded.manifest.counts.districts}-district plan ready`
-  elements.mapStatus.textContent = "Generated plan"
+  elements.mapStatus.textContent = `${loaded.manifest.editUnit === "precinct" ? "Precincts" : "Block groups"} · generated plan`
   elements.generate.textContent = "Generate again"
   elements.population.textContent = Math.round(analytics.totalPopulation).toLocaleString()
   elements.ideal.textContent = Math.round(analytics.idealPopulation).toLocaleString()
   elements.deviation.textContent = `${analytics.maxDeviationPercent.toFixed(2)}%`
   elements.resultSeed.textContent = seed.toString()
   elements.resultSection.hidden = false
-  elements.analyticsSubtitle.textContent = `${analytics.districts.length} districts · ${analytics.totalUnits.toLocaleString()} units · census and 2024 presidential diagnostics`
+  elements.analyticsSubtitle.textContent = `${analytics.districts.length} districts · ${analytics.totalUnits.toLocaleString()} ${loaded.manifest.editUnit === "precinct" ? "precincts" : "block groups"} · census and 2024 presidential diagnostics`
   renderAnalytics("overview", analytics)
   elements.analyticsPanel.hidden = false
 }
@@ -366,6 +406,7 @@ function readSetup() {
   const requestedState = query.get("state") ?? "tx"
   return {
     state: stateBySlug.has(requestedState) ? requestedState : "tx",
+    resolution: resolutionFromQuery(query.get("resolution")),
     seed: /^\d+$/.test(query.get("seed") ?? "") ? query.get("seed") ?? "42" : "42",
     steps: boundedInteger(query.get("steps") ?? "200", 0, 100_000),
     attempts: boundedInteger(query.get("attempts") ?? "3", 1, 20),
@@ -377,6 +418,7 @@ function readSetup() {
 function updateUrl() {
   const url = new URL(location.href)
   url.searchParams.set("state", elements.state.value)
+  url.searchParams.set("resolution", currentResolution())
   url.searchParams.set("seed", elements.seed.value)
   url.searchParams.set("steps", elements.steps.value)
   url.searchParams.set("attempts", elements.attempts.value)
@@ -398,6 +440,7 @@ function downloadAssignment() {
     algorithm: "recom-core",
     algorithmVersion: "0.1.0",
     generatedAt: new Date().toISOString(),
+    resolution: currentResolution(),
     state: loaded.manifest.state,
     params: {
       seed: elements.seed.value,
@@ -446,7 +489,7 @@ function renderHover(unitId: string | null) {
       <span>2024 presidential two-party</span>
       ${demShare === null ? "<strong>Unavailable</strong>" : `<i><b style="width:${demShare * 100}%"></b></i><div><strong>D ${formatPercent(demShare)}</strong><strong>R ${formatPercent(1 - demShare)}</strong></div>`}
     </div>
-    <small>UNIT ${escapeHtml(unit.unitId)}</small>
+    <small>${loaded?.manifest.editUnit === "precinct" ? "PRECINCT" : "BLOCK GROUP"} ${escapeHtml(unit.unitId)}</small>
   `
   elements.mapHover.hidden = false
 }
@@ -576,6 +619,22 @@ function syncRangeLabels() {
   elements.countyOutput.textContent = elements.county.value
 }
 
+function activateResolution(resolution: ViewerResolution) {
+  for (const control of elements.resolutionButtons) {
+    control.setAttribute("aria-pressed", String(control.dataset.resolution === resolution))
+  }
+  elements.resolutionHelp.textContent = resolution === "precinct"
+    ? "2024 election precincts; census statistics are allocated from source block groups."
+    : "Census block groups with their native demographic estimates."
+}
+
+function currentResolution(): ViewerResolution {
+  return elements.resolutionButtons.find((control) => control.getAttribute("aria-pressed") === "true")
+    ?.dataset.resolution === "precinct"
+    ? "precinct"
+    : "block-group"
+}
+
 function setControls(enabled: boolean) {
   elements.generate.disabled = !enabled
   elements.copy.disabled = !enabled
@@ -585,6 +644,7 @@ function setFormDisabled(disabled: boolean) {
   for (const control of [elements.state, elements.seed, elements.steps, elements.attempts, elements.tolerance, elements.county, elements.randomSeed]) {
     control.disabled = disabled
   }
+  for (const control of elements.resolutionButtons) control.disabled = disabled
 }
 
 function setProgress(percent: number) {

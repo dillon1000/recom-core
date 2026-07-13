@@ -21,6 +21,28 @@ export function denseToAssignment(unitIds: string[], assignment: Uint16Array) {
   return Object.fromEntries(unitIds.map((unitId, index) => [unitId, assignment[index] ?? 0]))
 }
 
+export function assignmentWithinTolerance(
+  units: Unit[],
+  assignment: Uint16Array,
+  districtCount: number,
+  tolerance: number,
+) {
+  if (assignment.length !== units.length || districtCount < 1 || tolerance < 0) return false
+  const populations = Array.from({ length: districtCount }, () => 0)
+  let totalPopulation = 0
+  for (let index = 0; index < units.length; index += 1) {
+    const district = assignment[index]
+    const unit = units[index]
+    if (!unit || district === undefined || district < 1 || district > districtCount) return false
+    populations[district - 1] = (populations[district - 1] ?? 0) + unit.popTotal
+    totalPopulation += unit.popTotal
+  }
+  const idealPopulation = totalPopulation / districtCount
+  return idealPopulation > 0 && populations.every(
+    (population) => Math.abs(population - idealPopulation) <= idealPopulation * tolerance,
+  )
+}
+
 export function buildGraph(adjacency: UnitAdjacency, units: Unit[]): GraphInput {
   const unitIds = units.map((unit) => unit.unitId)
   const indexById = new Map(unitIds.map((unitId, index) => [unitId, index]))

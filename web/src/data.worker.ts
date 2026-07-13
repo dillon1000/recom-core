@@ -4,10 +4,9 @@
  * compact unit records, a contiguous starting assignment, and transfer-ready
  * CSR graph arrays. Failures return descriptive messages without partial data.
  */
-import { tableFromIPC } from "apache-arrow"
-
 import { assignmentToDense, buildGraph, connectComponents } from "./graph"
 import type { AssignmentMap, Manifest, Unit, UnitAdjacency } from "./types"
+import { parseUnits } from "./unitParser"
 
 type Request = { type: "load"; requestId: number; slug: string; dataOrigin: string }
 type WorkerResponse =
@@ -36,15 +35,16 @@ async function load(message: Request) {
     validateManifest(manifest, message.slug)
     post({ type: "progress", requestId: message.requestId, phase: "Downloading state graph" })
 
+    const statisticsUrl = assetUrl(message.dataOrigin, message.slug, manifest.files.unitStats)
     const [statistics, adjacency, defaults] = await Promise.all([
-      fetch(assetUrl(message.dataOrigin, message.slug, manifest.files.unitStats)).then(requireOk),
+      fetch(statisticsUrl).then(requireOk),
       fetchJson<UnitAdjacency>(assetUrl(message.dataOrigin, message.slug, manifest.files.unitAdjacency)),
       fetchJson<{ assignments?: AssignmentMap }>(
         assetUrl(message.dataOrigin, message.slug, manifest.files.defaultAssignments),
       ),
     ])
     post({ type: "progress", requestId: message.requestId, phase: "Parsing state units" })
-    const units = await parseUnits(await statistics.arrayBuffer())
+    const units = await parseUnits(await statistics.arrayBuffer(), statisticsUrl)
     if (units.length !== manifest.counts.units) {
       throw new Error(`Expected ${manifest.counts.units} units but loaded ${units.length}.`)
     }
@@ -78,46 +78,6 @@ async function load(message: Request) {
       error: error instanceof Error ? error.message : String(error),
     })
   }
-}
-
-async function parseUnits(buffer: ArrayBuffer) {
-  const table = await tableFromIPC(new Uint8Array(buffer))
-  const units: Unit[] = []
-  for (const batch of table.batches) {
-    for (let index = 0; index < batch.numRows; index += 1) {
-      const row = batch.get(index) as Record<string, unknown> | null
-      if (!row) continue
-      const unit = {
-        unitId: String(row.unitId ?? ""),
-        countyFips: String(row.countyFips ?? ""),
-        countyName: String(row.countyName ?? ""),
-        label: String(row.label ?? ""),
-        popTotal: Number(row.popTotal),
-        popWhite: finite(row.popWhite),
-        popBlack: finite(row.popBlack),
-        popHispanic: finite(row.popHispanic),
-        popAsian: finite(row.popAsian),
-        popNative: finite(row.popNative),
-        popPacific: finite(row.popPacific),
-        popOther: finite(row.popOther),
-        president2024: {
-          dem: finite(row["partisanship.president2024.dem"]),
-          rep: finite(row["partisanship.president2024.rep"]),
-          other: finite(row["partisanship.president2024.other"]),
-        },
-      }
-      if (!unit.unitId || !Number.isSafeInteger(unit.popTotal) || unit.popTotal < 0) {
-        throw new Error(`State statistics contain an invalid unit at row ${units.length}.`)
-      }
-      units.push(unit)
-    }
-  }
-  return units
-}
-
-function finite(value: unknown) {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : 0
 }
 
 function validateManifest(manifest: Manifest, slug: string) {

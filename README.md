@@ -6,7 +6,7 @@ The same crate is compiled natively for invariant and oracle tests and to `wasm3
 
 ## Public web viewer
 
-The repository includes the complete responsive viewer published at [wasm-ar-beta.dillonr.ing](https://wasm-ar-beta.dillonr.ing). It loads authentic congressional geography and graph artifacts for all 50 states, layers generated districts over the public `tiles.totallynotacdn.com` planet archive, runs ReCom inside a dedicated Web Worker, and exports generated unit assignments as JSON. Unit hover inspection and the plan observatory expose population balance, Census demographic counts and shares, county fragmentation, cut edges, 2024 presidential outcomes, seat–vote and mean–median gaps, efficiency gap, and per-district diagnostics. Generation stays in the browser; the public data service receives ordinary read-only artifact requests and never receives plans or parameters.
+The repository includes the complete responsive viewer published at [wasm-ar-beta.dillonr.ing](https://wasm-ar-beta.dillonr.ing). It loads authentic congressional block-group or 2024 precinct geography and graph artifacts for all 50 states, layers generated districts over the public `tiles.totallynotacdn.com` planet archive, runs ReCom inside a dedicated Web Worker, and exports generated unit assignments as JSON. Unit hover inspection and the plan observatory expose population balance, Census demographic counts and shares, county fragmentation, cut edges, 2024 presidential outcomes, seat–vote and mean–median gaps, efficiency gap, and per-district diagnostics. Precinct statistics retain their source election results and allocate Census measures from intersecting source block groups. Generation stays in the browser; the public data service receives ordinary read-only artifact requests and never receives plans or parameters.
 
 Install dependencies and start the viewer from the repository root:
 
@@ -19,7 +19,7 @@ The development server prints the local URL. The viewer uses the public beta dat
 
 The viewer source lives under `web/`:
 
-- `web/src/data.worker.ts` downloads and validates Arrow, adjacency, assignment, and PMTiles metadata off the UI thread.
+- `web/src/data.worker.ts` downloads and validates Arrow or precinct JSON statistics, adjacency, assignment, and PMTiles metadata off the UI thread.
 - `web/src/recom.worker.ts` owns the WASM chain and posts bounded progress updates.
 - `web/src/graph.ts` creates the CSR input and deterministic virtual island links required by published geography.
 - `web/src/map.ts` renders real PMTiles geography, planet landmarks and labels, hover states, and generated district boundaries with MapLibre.

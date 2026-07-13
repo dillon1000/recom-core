@@ -9,6 +9,8 @@ export type StateEntry = {
   name: string
 }
 
+export type ViewerResolution = "block-group" | "precinct"
+
 export type Unit = {
   unitId: string
   countyFips: string
@@ -40,6 +42,7 @@ export type ManifestLayer = {
 }
 
 export type Manifest = {
+  editUnit: "block-group" | "precinct"
   state: {
     slug: string
     postal: string
@@ -72,7 +75,7 @@ export type Manifest = {
 
 export type StateBundle = {
   adjacency: UnitAdjacency
-  initialAssignment: Uint16Array
+  initialAssignment?: Uint16Array
   manifest: Manifest
   units: Unit[]
   virtualEdges: number
@@ -115,7 +118,7 @@ export type WorkerRequest = {
     populations: ArrayBuffer
   }
   params: Omit<GenerationParams, "initialAssignment"> & {
-    initialAssignment: ArrayBuffer
+    initialAssignment?: ArrayBuffer
   }
 }
 

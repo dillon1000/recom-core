@@ -1,9 +1,9 @@
 /**
- * Lists the 50 congressional datasets exposed by the public beta data service.
- * District counts and geographic bounds remain manifest-owned, so updating a
- * published dataset does not require duplicating its operational metadata here.
+ * Lists the 50 congressional state choices and maps geography modes to the
+ * public beta's block-group and precinct dataset siblings. District counts and
+ * bounds remain manifest-owned so published data can change independently.
  */
-import type { StateEntry } from "./types"
+import type { StateEntry, ViewerResolution } from "./types"
 
 export const states: readonly StateEntry[] = [
   ["al", "AL", "Alabama"], ["ak", "AK", "Alaska"], ["az", "AZ", "Arizona"],
@@ -28,3 +28,17 @@ export const states: readonly StateEntry[] = [
 ].map(([slug, postal, name]) => ({ slug, postal, name }))
 
 export const stateBySlug = new Map(states.map((state) => [state.slug, state]))
+
+export const viewerResolutions = ["block-group", "precinct"] as const satisfies readonly ViewerResolution[]
+
+export function datasetSlug(stateSlug: string, resolution: ViewerResolution) {
+  return resolution === "precinct" ? `${stateSlug}-precincts` : stateSlug
+}
+
+export function resolutionFromQuery(value: string | null): ViewerResolution {
+  return value === "precinct" ? "precinct" : "block-group"
+}
+
+export function resolutionLabel(resolution: ViewerResolution) {
+  return resolution === "precinct" ? "2024 precincts" : "Census block groups"
+}

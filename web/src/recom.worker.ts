@@ -34,7 +34,9 @@ async function run(request: WorkerRequest) {
       {
         ...params,
         frozenDistricts: new Uint16Array(),
-        initialAssignment: new Uint16Array(initialAssignment),
+        ...(initialAssignment
+          ? { initialAssignment: new Uint16Array(initialAssignment) }
+          : {}),
       },
     )
     let completed = 0
