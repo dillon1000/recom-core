@@ -40,11 +40,14 @@ export class ViewerMap {
     private readonly onHover: (unitId: string | null) => void,
   ) {
     installProtocol()
+    const floatingPanelLayout = window.matchMedia("(min-width: 821px)").matches
     this.map = new maplibregl.Map({
       attributionControl: false,
       bounds: manifest.state.bounds,
       container,
-      fitBoundsOptions: { padding: 28 },
+      fitBoundsOptions: {
+        padding: floatingPanelLayout ? { top: 36, right: 44, bottom: 100, left: 396 } : 28,
+      },
       maxBounds: paddedBounds(manifest.state.bounds),
       maxZoom: 13,
       minZoom: 1,
@@ -55,7 +58,7 @@ export class ViewerMap {
         layers: [{ id: "background", type: "background", paint: { "background-color": "#eeeae3" } }],
       },
     })
-    this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right")
+    this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
     this.map.addControl(new maplibregl.ScaleControl({ maxWidth: 110, unit: "imperial" }), "bottom-right")
     this.map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right")
     this.map.on("load", () => {

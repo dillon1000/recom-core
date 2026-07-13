@@ -40,16 +40,38 @@ import type {
 const app = document.querySelector<HTMLElement>("#app")
 if (!app) throw new Error("The viewer root is missing.")
 
+const icons = {
+  chart: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>`,
+  dices: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="12" height="12" x="2" y="10" rx="2" ry="2"/><path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6"/><path d="M6 18h.01"/><path d="M10 14h.01"/><path d="M15 6h.01"/><path d="M18 9h.01"/></svg>`,
+  download: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>`,
+  x: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`,
+}
+
 app.innerHTML = `
   <div class="viewer-shell">
-    <aside class="viewer-sidebar">
-      <header class="viewer-header">
-        <div class="viewer-eyebrow"><span class="viewer-mark">AR</span><span>RECOM-CORE / PUBLIC VIEWER</span></div>
-        <h1>Auto-redistricter</h1>
-        <p>Generate contiguous, population-balanced congressional plans from census block groups or authentic precinct boundaries. No account, upload, or server compute.</p>
+    <section class="viewer-map" aria-label="Generated district map">
+      <div id="map" class="viewer-map__canvas"></div>
+      <div class="map-overlays">
+        <div class="map-label"><strong id="map-state">Loading</strong><span id="map-status">Authentic geography</span></div>
+        <div class="map-color-control">
+          <span>Map color</span>
+          <div role="group" aria-label="Map color mode"><button type="button" data-map-color="district" aria-pressed="true">Districts</button><button type="button" data-map-color="partisanship" aria-pressed="false" disabled>Partisan</button></div>
+          <div class="partisan-legend" id="partisan-legend" role="img" aria-label="Each generated district colored continuously by its aggregate 2024 presidential two-party margin from Republican plus 30 through even to Democratic plus 30" hidden><i></i><div><span>R +30</span><span>Even</span><span>D +30</span></div></div>
+        </div>
+        <div class="map-hover" id="map-hover" hidden></div>
+      </div>
+    </section>
+
+    <aside class="viewer-panel">
+      <header class="panel-header">
+        <div class="panel-identity">
+          <span class="viewer-mark">AR</span>
+          <div><h1>Auto-redistricter</h1><span class="viewer-eyebrow">recom-core / public viewer</span></div>
+        </div>
+        <p>Contiguous, population-balanced congressional plans from census block groups or authentic precincts. Deterministic, local, and unsigned—no account, upload, or server compute.</p>
       </header>
 
-      <section class="viewer-section" aria-labelledby="dataset-heading">
+      <section class="panel-section" aria-labelledby="dataset-heading">
         <div class="section-heading"><span>01</span><h2 id="dataset-heading">Dataset</h2></div>
         <fieldset class="resolution-control">
           <legend>Geography</legend>
@@ -66,9 +88,9 @@ app.innerHTML = `
         <p class="note" id="island-note" hidden></p>
       </section>
 
-      <section class="viewer-section" aria-labelledby="parameters-heading">
+      <section class="panel-section" aria-labelledby="parameters-heading">
         <div class="section-heading"><span>02</span><h2 id="parameters-heading">Parameters</h2></div>
-        <label class="field"><span>Seed</span><div class="input-action"><input id="seed" inputmode="numeric" /><button id="random-seed" type="button" aria-label="Generate a random seed">↻</button></div><small>Same state, seed, and controls produce the same plan.</small></label>
+        <label class="field"><span>Seed</span><div class="input-action"><input id="seed" inputmode="numeric" /><button id="random-seed" type="button" aria-label="Generate a random seed">${icons.dices}</button></div><small>Same state, seed, and controls produce the same plan.</small></label>
         <div class="control-grid">
           <label class="field"><span>Proposals</span><input id="steps" type="number" min="0" max="100000" step="100" /></label>
           <label class="field"><span>Tree attempts</span><input id="attempts" type="number" min="1" max="20" /></label>
@@ -77,21 +99,14 @@ app.innerHTML = `
         <label class="range-field"><span><span>County preservation</span><output id="county-output">10</output></span><input id="county" type="range" min="0" max="50" step="1" /><small>Biases proposals toward county boundaries and weights county fragments when Optimize selects a plan.</small></label>
       </section>
 
-      <section class="viewer-section" aria-labelledby="generation-heading">
+      <section class="panel-section" aria-labelledby="generation-heading">
         <div class="section-heading"><span>03</span><h2 id="generation-heading">Generation</h2></div>
         <div class="actions"><button class="button button--primary" id="generate" type="button" disabled>Generate plan</button><button class="button" id="copy" type="button" disabled>Copy setup</button></div>
-        <div class="run-state" aria-live="polite"><span class="progress"><i id="run-progress"></i></span><span><b id="run-label">Loading data</b><b id="run-percent">0%</b></span></div>
-        <div class="metric-grid metric-grid--two" id="score-grid" hidden>
-          <div class="metric"><span>Accepted</span><strong id="accepted-value">0</strong></div>
-          <div class="metric"><span>Rejected</span><strong id="rejected-value">0</strong></div>
-          <div class="metric"><span>Weighted cut</span><strong id="cut-value">0</strong></div>
-          <div class="metric"><span>County splits</span><strong id="splits-value">0</strong></div>
-        </div>
         <p class="note" id="generation-note">ReCom starts from the published reference assignment, then advances the seeded proposal chain entirely inside a Web Worker.</p>
         <p class="error" id="error" role="alert" hidden></p>
       </section>
 
-      <section class="viewer-section" id="result-section" aria-labelledby="result-heading" hidden>
+      <section class="panel-section" id="result-section" aria-labelledby="result-heading" hidden>
         <div class="section-heading"><span>04</span><h2 id="result-heading">Result</h2></div>
         <fieldset class="result-mode-control">
           <legend>Plan output</legend>
@@ -104,25 +119,27 @@ app.innerHTML = `
           <div class="metric"><span>Max deviation</span><strong id="deviation-value">—</strong></div>
           <div class="metric"><span>Seed</span><strong id="result-seed">—</strong></div>
         </div>
-        <button class="button button--full" id="download" type="button">Download assignment JSON</button>
-        <button class="button button--full button--analytics" id="open-analytics" type="button">Open detailed analytics</button>
-        <button class="button button--full button--explorer" id="open-explorer" type="button" hidden>Explore proposals</button>
+        <button class="button button--full" id="download" type="button">${icons.download}Download assignment JSON</button>
+        <button class="button button--full button--analytics" id="open-analytics" type="button">${icons.chart}Open detailed analytics</button>
+        <button class="button button--full button--explorer" id="open-explorer" type="button" hidden>${icons.chart}Explore proposals</button>
       </section>
 
-      <footer class="viewer-footer"><span>MIT / DETERMINISTIC WASM</span><a href="https://github.com/dillon1000/recom-core">SOURCE</a></footer>
+      <footer class="panel-footer"><span>MIT / DETERMINISTIC WASM</span><a href="https://github.com/dillon1000/recom-core">Source</a></footer>
     </aside>
-    <section class="viewer-map" aria-label="Generated district map">
-      <div id="map" class="viewer-map__canvas"></div>
-      <div class="map-label"><strong id="map-state">Loading</strong><span id="map-status">Authentic geography</span></div>
-      <div class="map-color-control">
-        <span>Map color</span>
-        <div role="group" aria-label="Map color mode"><button type="button" data-map-color="district" aria-pressed="true">Districts</button><button type="button" data-map-color="partisanship" aria-pressed="false" disabled>Partisan</button></div>
-        <div class="partisan-legend" id="partisan-legend" role="img" aria-label="Each generated district colored continuously by its aggregate 2024 presidential two-party margin from Republican plus 30 through even to Democratic plus 30" hidden><i></i><div><span>R +30</span><span>Even</span><span>D +30</span></div></div>
+
+    <footer class="telemetry" id="telemetry" data-state="loading" role="status" aria-live="polite">
+      <div class="telemetry-state"><i></i><b id="run-label">Loading data</b></div>
+      <div class="telemetry-progress"><span class="progress"><i id="run-progress"></i></span><b id="run-percent">0%</b></div>
+      <div class="telemetry-metrics" id="score-grid" hidden>
+        <div><span>Accepted</span><strong id="accepted-value">0</strong></div>
+        <div><span>Rejected</span><strong id="rejected-value">0</strong></div>
+        <div><span>Weighted cut</span><strong id="cut-value">0</strong></div>
+        <div><span>County splits</span><strong id="splits-value">0</strong></div>
       </div>
-      <div class="map-hover" id="map-hover" hidden></div>
-    </section>
+    </footer>
+
     <aside class="analytics-panel" id="analytics-panel" role="dialog" aria-label="Generated plan analytics" hidden>
-      <header class="analytics-header"><div><span>PLAN OBSERVATORY</span><h2>Generated plan analytics</h2><p id="analytics-subtitle"></p></div><button id="close-analytics" type="button" aria-label="Close analytics">×</button></header>
+      <header class="analytics-header"><div><span>PLAN OBSERVATORY</span><h2>Generated plan analytics</h2><p id="analytics-subtitle"></p></div><button id="close-analytics" type="button" aria-label="Close analytics">${icons.x}</button></header>
       <nav class="analytics-tabs" id="analytics-tabs" aria-label="Analytics views">
         <button data-tab="overview" aria-current="page">Overview</button><button data-tab="population">Population</button><button data-tab="demographics">Demographics</button><button data-tab="elections">Elections</button><button data-tab="districts">Districts</button>
       </nav>
@@ -155,6 +172,7 @@ const elements = {
   resultSeed: get("result-seed"), runLabel: get("run-label"), runPercent: get("run-percent"),
   runProgress: get("run-progress"), scoreGrid: get("score-grid"), seed: input("seed"),
   splits: get("splits-value"), state: select("state-select"), steps: input("steps"),
+  telemetry: get("telemetry"),
   tolerance: input("tolerance"), toleranceOutput: get("tolerance-output"), units: get("units-value"),
   unitsLabel: get("units-label"),
 }
@@ -293,6 +311,7 @@ async function loadSelectedState() {
   clearResult()
   setError(null)
   setControls(false)
+  setTelemetry("loading")
   elements.loadState.hidden = false
   elements.loadLabel.textContent = "Loading manifest"
   elements.runLabel.textContent = "Loading data"
@@ -322,12 +341,14 @@ async function loadSelectedState() {
     viewerMap = new ViewerMap(elements.map, bundle.manifest, renderHover)
     viewerMap.setColorMode(currentMapColorMode())
     setControls(true)
+    setTelemetry("ready")
     elements.runLabel.textContent = "Ready to generate"
     elements.generationNote.textContent = bundle.manifest.counts.districts === 1
       ? `${bundle.manifest.state.stateName} is at-large, so generation assigns every ${resolution === "precinct" ? "precinct" : "block group"} to District 1.`
       : `ReCom reuses the published ${resolutionLabel(resolution).toLowerCase()} reference assignment when it satisfies the selected tolerance. Otherwise it deterministically seeds a balanced contiguous plan before advancing the proposal chain.`
   } catch (error) {
     setError(message(error))
+    setTelemetry("failed")
     elements.loadLabel.textContent = "Dataset failed"
     elements.runLabel.textContent = "Unavailable"
     elements.mapStatus.textContent = "Dataset unavailable"
@@ -376,6 +397,7 @@ async function generate(branchAssignment?: Uint16Array, sourceProposal?: number)
   const currentRequest = requestId
   const worker = new ReComWorker()
   recomWorker = worker
+  setTelemetry("running")
   elements.generate.textContent = "Cancel"
   elements.runLabel.textContent = `Running 0 / ${params.steps.toLocaleString()} proposals`
   if (sourceProposal !== undefined) {
@@ -402,6 +424,7 @@ async function generate(branchAssignment?: Uint16Array, sourceProposal?: number)
     elements.generate.textContent = "Generate again"
     if (response.type === "error") {
       setError(response.error)
+      setTelemetry("failed")
       elements.runLabel.textContent = "Generation failed"
       return
     }
@@ -420,6 +443,7 @@ async function generate(branchAssignment?: Uint16Array, sourceProposal?: number)
     recomWorker = null
     worker.terminate()
     setFormDisabled(false)
+    setTelemetry("failed")
     elements.generate.textContent = "Generate plan"
     setError(event.message || "The ReCom worker failed.")
   }
@@ -479,6 +503,7 @@ function finishPlan(seed: bigint, openAnalytics = true) {
   if (partisanControl) partisanControl.disabled = false
   renderScore(selectedStatus)
   setProgress(100)
+  setTelemetry("done")
   elements.runLabel.textContent = selectedProposal === null
     ? `${loaded.manifest.counts.districts}-district ${currentResultMode() === "optimized" ? "optimized" : "sample"} ready`
     : `Proposal ${selectedProposal.toLocaleString()} selected`
@@ -499,7 +524,10 @@ function cancelGeneration() {
   recomWorker = null
   setFormDisabled(false)
   elements.generate.textContent = assignment ? "Generate again" : "Generate plan"
-  if (loaded) elements.runLabel.textContent = assignment ? "Plan ready" : "Ready to generate"
+  if (loaded) {
+    setTelemetry(assignment ? "done" : "ready")
+    elements.runLabel.textContent = assignment ? "Plan ready" : "Ready to generate"
+  }
 }
 
 function renderScore(status: ChainStatus) {
@@ -810,6 +838,11 @@ function escapeHtml(value: string) { return value.replace(/[&<>'"]/g, (character
 function syncRangeLabels() {
   elements.toleranceOutput.textContent = `${Number(elements.tolerance.value).toFixed(1)}%`
   elements.countyOutput.textContent = elements.county.value
+  for (const control of [elements.tolerance, elements.county]) {
+    const minimum = Number(control.min)
+    const share = (Number(control.value) - minimum) / (Number(control.max) - minimum)
+    control.style.setProperty("--fill", `${share * 100}%`)
+  }
 }
 
 function activateMapColorMode(colorMode: MapColorMode) {
@@ -855,6 +888,12 @@ function setFormDisabled(disabled: boolean) {
     control.disabled = disabled
   }
   for (const control of elements.resolutionButtons) control.disabled = disabled
+}
+
+type TelemetryState = "loading" | "ready" | "running" | "done" | "failed"
+
+function setTelemetry(state: TelemetryState) {
+  elements.telemetry.dataset.state = state
 }
 
 function setProgress(percent: number) {
