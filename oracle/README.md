@@ -32,8 +32,7 @@ git -C /tmp/frcw.rs checkout 5d6322f0fb9f1bd5830fabb46ff4b069c98c2d46
 RUSTFLAGS="-C target-cpu=native" cargo build \
   --manifest-path /tmp/frcw.rs/Cargo.toml --release --bin frcw
 
-cargo build --manifest-path crates/recom-core/Cargo.toml \
-  --release --features oracle --bin oracle
+cargo build --release --features oracle --bin oracle
 ```
 
 For each pinned seed, run frcw and recom-core against the same balanced graph:
@@ -52,7 +51,7 @@ For each pinned seed, run frcw and recom-core against the same balanced graph:
   --writer jsonl \
   --cut-edges-count > /tmp/frcw-20260712.jsonl
 
-crates/recom-core/target/release/oracle \
+target/release/oracle \
   --graph-json /tmp/VA_precincts_balanced.json \
   --pop-col TOTPOP \
   --assignment-col RECOM_SEED \
@@ -65,7 +64,7 @@ crates/recom-core/target/release/oracle \
 Repeat with seeds `94915664` and `8675309`, then compare all three pairs:
 
 ```bash
-python3 crates/recom-core/oracle/compare.py \
+python3 oracle/compare.py \
   --frcw /tmp/frcw-20260712.jsonl --ours /tmp/ours-20260712.jsonl \
   --frcw /tmp/frcw-94915664.jsonl --ours /tmp/ours-94915664.jsonl \
   --frcw /tmp/frcw-8675309.jsonl --ours /tmp/ours-8675309.jsonl
@@ -84,3 +83,7 @@ The approved RMST-aligned 100,000-proposal comparison passed every acceptance th
 Aggregate cut-edge KS D was `0.011006`. Mean cut edges were `596.791133` for frcw and `596.981182` for recom-core, a `0.031845%` relative difference. Aggregate population KS D was `0.004531`.
 
 The runners both use one random-key Kruskal tree draw per proposal. This matches recom-core's settled tree sampler to frcw's RMST kernel while preserving different RNG streams, so only the post-burn-in distributions—not individual steps—are compared.
+
+## Optional scoring attributes
+
+The pinned frcw comparison intentionally omits county and perimeter attributes, preserving its historical cut-edge distribution. Other GerryChain node-link or adjacency-data inputs may add `--county-col <node attribute>` and `--edge-weight-attr <edge attribute>`. County values derive county-crossing flags and county regions; edge weights must be positive integers and must agree across reverse adjacency entries. Accepted-step JSONL keeps `step`, `cut_edges`, and `district_pops` while also emitting `weighted_cut`, `county_fragments`, `county_splits`, and `max_deviation_ppm` for offline baseline construction.
