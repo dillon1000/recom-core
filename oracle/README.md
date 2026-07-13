@@ -74,6 +74,8 @@ python3 oracle/compare.py \
 
 The approved RMST-aligned 100,000-proposal comparison passed every acceptance threshold on 2026-07-12.
 
+These pinned results predate minimal relabeling. They were produced with the earlier coin-flip label stream and no longer reproduce exactly with the current proposal RNG sequence. The pinned `RECOM_SEED` plan is unaffected because seed generation does not call `choose_balanced_cut`. Cut-edge count is label-invariant, so the distributional conclusion stands. Re-running the full manual procedure (three 100,000-proposal chains across both implementations) is a separate follow-up.
+
 | Seed | Cut-edge KS D | Population KS D |
 |---:|---:|---:|
 | 20260712 | 0.016523 | 0.010252 |
