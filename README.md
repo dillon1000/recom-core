@@ -2,7 +2,29 @@
 
 `recom-core` is the deterministic Rust implementation behind Resigned's automatic redistricting. It accepts a population-weighted adjacency graph in compressed sparse row form, creates or validates a contiguous seed partition, and advances a ReCom chain while preserving contiguity and the configured population tolerance.
 
-The same crate is compiled natively for invariant and oracle tests and to `wasm32-unknown-unknown` for the browser worker. Proposal randomness uses a pinned `ChaCha8Rng`; spanning trees use integer random edge keys; population comparisons use integer fixed-point bounds. A seed, graph, assignment, and parameter set therefore produce the same assignments in native and WASM builds. The public generator returns the final seeded chain sample; best-score tracking remains available to a future explicit optimization workflow without collapsing distinct seeds back to a strong reference plan.
+The root crate is compiled natively for invariant and oracle tests and to `wasm32-unknown-unknown` for the browser worker. Proposal randomness uses a pinned `ChaCha8Rng`; spanning trees use integer random edge keys; population comparisons use integer fixed-point bounds. A seed, graph, assignment, and parameter set therefore produce the same assignments in native and WASM builds. The public generator returns the final seeded chain sample; Pareto optimization remains separately available through `best_assignment` and the frontier APIs without collapsing distinct seeds back to a strong reference plan.
+
+## Scoring workspace
+
+`crates/recom-scoring` is the solver-independent scoring library. `recom-core` supplies canonical weighted edges, county-region membership, assignment changes, and district populations; `recom-scoring` owns the score types, incremental bookkeeping, full-recompute oracle, Pareto archive, ensemble statistics, and percentile lookup. Scoring never reads the chain RNG, so enabling weights or inspecting the frontier cannot change the proposal stream.
+
+Each `PlanScore` reports:
+
+- `weightedCut`: the sum of weights on district-boundary edges. Omitted weights default to one, making this the canonical cut-edge count.
+- `countyFragments`: the sum of `distinct districts present - 1` across county regions.
+- `countySplits`: the number of county regions present in multiple districts, retained as a familiar report-only measure.
+- `maxDeviationPpm`: the largest district population deviation from ideal in integer parts per million.
+
+The optimization tuple is `(weightedCut, countyFragments, maxDeviationPpm)`, with every objective minimized. The chain retains mutually nondominated plans in a deterministic 24-entry archive. Identical tuples keep the lexicographically smallest assignment; one deterministic champion for each metric is protected; remaining entries are evicted from the lexicographically largest objective tuple downward. `best_assignment` is the lexicographically smallest tuple for compatibility. `countySurcharge` affects only spanning-tree edge priorities and is not a score weight.
+
+## Optional scoring artifacts
+
+The standalone viewer accepts two optional manifest files without changing the existing adjacency contract:
+
+- `files.unitAdjacencyWeights` names a `Record<string, number[]>` JSON artifact. Every positive integer-meter row must align index-for-index with the unit's neighbor row, and reverse directed entries must agree. Missing artifacts omit the WASM weight array, so every edge defaults to one; deterministic virtual island links also use one.
+- `files.ensembleBaseline` names a JSON artifact with `{ meta, metrics }`. Each metric contains `count`, `mean`, a `p1` through `p99` percentile table, and histogram bins. The viewer validates the artifact and performs clamped linear percentile lookup, but intentionally does not display percentile UI yet.
+
+Artifact generation, state regeneration, publication, and storage operations are offline data-pipeline responsibilities and are not performed by this repository's viewer request path.
 
 ## Public web viewer
 
@@ -19,7 +41,7 @@ The development server prints the local URL. The viewer uses the public beta dat
 
 The viewer source lives under `web/`:
 
-- `web/src/data.worker.ts` downloads and validates Arrow or precinct JSON statistics, adjacency, assignment, and PMTiles metadata off the UI thread.
+- `web/src/data.worker.ts` downloads and validates Arrow or precinct JSON statistics, adjacency, assignment, optional scoring artifacts, and PMTiles metadata off the UI thread.
 - `web/src/recom.worker.ts` owns the WASM chain and posts bounded progress updates.
 - `web/src/graph.ts` creates the CSR input and deterministic virtual island links required by published geography.
 - `web/src/map.ts` renders real PMTiles geography, planet landmarks and labels, hover states, and generated district boundaries with MapLibre.

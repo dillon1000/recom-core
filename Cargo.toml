@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT"
 description = "Deterministic ReCom redistricting core for native and WebAssembly runtimes"
 repository = "https://github.com/dillon1000/recom-core"
+readme = "README.md"
 
 [workspace]
 members = ["crates/recom-scoring"]
