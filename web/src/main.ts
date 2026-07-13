@@ -1,8 +1,9 @@
 /**
  * Owns the standalone public viewer UI. Inputs are URL-backed controls and the
  * 50-state data loader; outputs are deterministic plans, live map updates,
- * shareable proposal URLs, map-linked chain exploration, and portable JSON
- * assignments. Generation is local and unsigned with no server compute path.
+ * shareable proposal URLs, map-linked chain exploration, portable JSON
+ * assignments, and nonce-bound Resigned2 tab handoffs. Generation and map
+ * transfer are local and unsigned with no server compute path.
  */
 import "./style.css"
 
@@ -16,7 +17,21 @@ import {
   viewerResolutions,
 } from "./catalog"
 import { loadState, type LoadedState } from "./data"
-import { assignmentWithinTolerance, denseToAssignment } from "./graph"
+import { assignmentToDense, assignmentWithinTolerance, denseToAssignment } from "./graph"
+import {
+  createHandoffToken,
+  datasetSelection,
+  handoffMessage,
+  handoffTokenFromURL,
+  isHandoffMessage,
+  parseLaunchContextMessage,
+  resigned2HandoffURL,
+  resigned2Origin,
+  type HandoffAnimationPhase,
+  type HandoffDirection,
+  type ReComPlanHandoff,
+  type Resigned2LaunchContext,
+} from "./handoff"
 import { ViewerMap } from "./map"
 import type { MapColorMode } from "./mapColors"
 import { ProposalPanel } from "./proposalPanel"
@@ -44,6 +59,7 @@ const icons = {
   chart: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>`,
   dices: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="12" height="12" x="2" y="10" rx="2" ry="2"/><path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6"/><path d="M6 18h.01"/><path d="M10 14h.01"/><path d="M15 6h.01"/><path d="M18 9h.01"/></svg>`,
   download: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>`,
+  handoff: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>`,
   x: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`,
 }
 
@@ -119,6 +135,7 @@ app.innerHTML = `
           <div class="metric"><span>Max deviation</span><strong id="deviation-value">—</strong></div>
           <div class="metric"><span>Seed</span><strong id="result-seed">—</strong></div>
         </div>
+        <button class="button button--full button--primary" id="send-resigned2" type="button">${icons.handoff}Open in Resigned2</button>
         <button class="button button--full" id="download" type="button">${icons.download}Download assignment JSON</button>
         <button class="button button--full button--analytics" id="open-analytics" type="button">${icons.chart}Open detailed analytics</button>
         <button class="button button--full button--explorer" id="open-explorer" type="button" hidden>${icons.chart}Explore proposals</button>
@@ -137,6 +154,18 @@ app.innerHTML = `
         <div><span>County splits</span><strong id="splits-value">0</strong></div>
       </div>
     </footer>
+
+    <aside class="handoff-dialog" id="handoff-dialog" role="dialog" aria-labelledby="handoff-title" aria-describedby="handoff-detail" hidden>
+      <div class="handoff-dialog__eyebrow">LOCAL MAP BRIDGE</div>
+      <h2 id="handoff-title">Connecting Resigned2 and ReCom</h2>
+      <p id="handoff-detail">Waiting for the other tab to confirm the private connection.</p>
+      <div class="handoff-visual" id="handoff-visual" data-direction="resigned2-to-recom" data-phase="connecting" role="img" aria-label="Connecting Resigned2 and ReCom">
+        <span class="handoff-endpoint" data-endpoint="resigned2"><i></i><b>R2</b></span>
+        <span class="handoff-track"><i></i><b id="handoff-packet"></b></span>
+        <span class="handoff-endpoint" data-endpoint="recom"><i></i><b>ReCom</b></span>
+      </div>
+      <button class="button" id="handoff-close" type="button" hidden>Close</button>
+    </aside>
 
     <aside class="analytics-panel" id="analytics-panel" role="dialog" aria-label="Generated plan analytics" hidden>
       <header class="analytics-header"><div><span>PLAN OBSERVATORY</span><h2>Generated plan analytics</h2><p id="analytics-subtitle"></p></div><button id="close-analytics" type="button" aria-label="Close analytics">${icons.x}</button></header>
@@ -175,6 +204,10 @@ const elements = {
   telemetry: get("telemetry"),
   tolerance: input("tolerance"), toleranceOutput: get("tolerance-output"), units: get("units-value"),
   unitsLabel: get("units-label"),
+  sendResigned2: button("send-resigned2"),
+  handoffClose: button("handoff-close"), handoffDetail: get("handoff-detail"),
+  handoffDialog: get("handoff-dialog"), handoffPacket: get("handoff-packet"),
+  handoffTitle: get("handoff-title"), handoffVisual: get("handoff-visual"),
 }
 
 for (const state of states) {
@@ -208,6 +241,8 @@ let proposalScoreOverride: PlanScore | null = null
 let selectedProposal: number | null = null
 let lastStatus: ChainStatus | null = null
 let analytics: PlanAnalytics | null = null
+let handoffInitialAssignment: Uint16Array | null = null
+let handoffCleanup = () => {}
 let unitLookup = new Map<string, LoadedState["units"][number]>()
 let requestId = 0
 
@@ -260,10 +295,16 @@ elements.county.addEventListener("input", syncRangeLabels)
 elements.randomSeed.addEventListener("click", () => { elements.seed.value = randomSeed() })
 elements.generate.addEventListener("click", () => {
   if (recomWorker) cancelGeneration()
-  else void generate()
+  else {
+    const initialAssignment = handoffInitialAssignment
+    handoffInitialAssignment = null
+    void generate(initialAssignment ?? undefined)
+  }
 })
 elements.copy.addEventListener("click", () => void copySetup())
 elements.download.addEventListener("click", downloadAssignment)
+elements.sendResigned2.addEventListener("click", sendToResigned2)
+elements.handoffClose.addEventListener("click", hideHandoff)
 elements.openAnalytics.addEventListener("click", () => {
   if (analytics) elements.analyticsPanel.hidden = false
 })
@@ -285,7 +326,7 @@ window.addEventListener("keydown", (event) => {
   }
 })
 
-void loadSelectedState()
+if (!receiveResigned2Handoff()) void loadSelectedState()
 
 async function loadSelectedState() {
   const resolution = currentResolution()
@@ -293,6 +334,7 @@ async function loadSelectedState() {
   cancelGeneration()
   loaded = null
   assignment = null
+  handoffInitialAssignment = null
   sampleAssignment = null
   bestAssignment = null
   frontierScores = []
@@ -402,6 +444,8 @@ async function generate(branchAssignment?: Uint16Array, sourceProposal?: number)
   elements.runLabel.textContent = `Running 0 / ${params.steps.toLocaleString()} proposals`
   if (sourceProposal !== undefined) {
     elements.generationNote.textContent = `This chain branches from proposal ${sourceProposal.toLocaleString()} of the preceding run using the current controls and seed.`
+  } else if (branchAssignment) {
+    elements.generationNote.textContent = "This chain starts from the complete map received from Resigned2."
   }
   setFormDisabled(true)
 
@@ -602,6 +646,261 @@ async function copySetup() {
   await navigator.clipboard.writeText(location.href)
   elements.copy.textContent = "Copied"
   setTimeout(() => { elements.copy.textContent = "Copy setup" }, 1_500)
+}
+
+/** Opens a strict-origin receiver before data loading so Resigned2 can seed this tab. */
+function receiveResigned2Handoff() {
+  const token = handoffTokenFromURL()
+  if (!token) return false
+  const opener = window.opener
+  if (!opener) {
+    showHandoff(
+      "resigned2-to-recom",
+      "error",
+      "Handoff interrupted",
+      "This ReCom tab is no longer connected to Resigned2. You can still use ReCom normally.",
+    )
+    return false
+  }
+
+  const sourceOrigin = resigned2Origin()
+  let handled = false
+  showHandoff(
+    "resigned2-to-recom",
+    "connecting",
+    "Connecting Resigned2 and ReCom",
+    "Waiting for Resigned2 to send the active map context.",
+  )
+  const timeout = window.setTimeout(() => {
+    if (handled) return
+    showHandoff(
+      "resigned2-to-recom",
+      "error",
+      "Handoff interrupted",
+      "Resigned2 did not send a map. Close this message and try the handoff again.",
+    )
+    cleanup()
+    void loadSelectedState()
+  }, 20_000)
+  const receive = (event: MessageEvent<unknown>) => {
+    if (
+      handled
+      || event.origin !== sourceOrigin
+      || event.source !== opener
+      || !isHandoffMessage(event.data, "resigned2-to-recom", "context", token)
+    ) return
+    handled = true
+    window.clearTimeout(timeout)
+    showHandoff(
+      "resigned2-to-recom",
+      "transferring",
+      "Receiving the Resigned2 map",
+      "The dataset and assignment are moving directly between these browser tabs.",
+    )
+    void Promise.resolve()
+      .then(() => parseLaunchContextMessage(event.data, token))
+      .then(applyResigned2Context)
+      .then(() => {
+        opener.postMessage(
+          handoffMessage("resigned2-to-recom", "complete", token),
+          sourceOrigin,
+        )
+        showHandoff(
+          "resigned2-to-recom",
+          "accepted",
+          "Map received",
+          "ReCom is ready to continue from the Resigned2 context.",
+        )
+        window.setTimeout(hideHandoff, 850)
+      })
+      .catch((error: unknown) => {
+        const detail = message(error)
+        opener.postMessage(
+          handoffMessage("resigned2-to-recom", "error", token, { error: detail }),
+          sourceOrigin,
+        )
+        showHandoff(
+          "resigned2-to-recom",
+          "error",
+          "Handoff interrupted",
+          detail,
+        )
+      })
+      .finally(cleanup)
+  }
+  const cleanup = () => {
+    window.clearTimeout(timeout)
+    window.removeEventListener("message", receive)
+  }
+  window.addEventListener("message", receive)
+  opener.postMessage(handoffMessage("resigned2-to-recom", "ready", token), sourceOrigin)
+  return true
+}
+
+/** Loads the requested dataset, displays partial maps, and seeds ReCom only from complete maps. */
+async function applyResigned2Context(context: Resigned2LaunchContext) {
+  const selection = datasetSelection(context.datasetSlug)
+  elements.state.value = selection.stateSlug
+  activateResolution(selection.resolution)
+  await loadSelectedState()
+  if (!loaded || loaded.manifest.state.slug !== context.datasetSlug) {
+    throw new Error("ReCom could not load the Resigned2 dataset.")
+  }
+  if (loaded.manifest.counts.districts !== context.districtCount) {
+    throw new Error("The Resigned2 district count does not match this ReCom dataset.")
+  }
+
+  if (!context.assignment) {
+    elements.generationNote.textContent = `${context.title ?? "The Resigned2 plan"} opened this dataset. Generate a plan when the controls are ready.`
+    return
+  }
+  const knownUnitIDs = new Set(loaded.graph.unitIds)
+  const unknownUnitID = Object.keys(context.assignment).find((unitID) => !knownUnitIDs.has(unitID))
+  if (unknownUnitID) {
+    throw new Error(`The Resigned2 map contains an unavailable unit (${unknownUnitID}).`)
+  }
+
+  assignment = context.assignment
+  viewerMap?.setAssignment(assignment)
+  const assignedCount = Object.keys(assignment).length
+  const complete = assignedCount === loaded.graph.unitIds.length
+  if (complete) handoffInitialAssignment = assignmentToDense(loaded.graph.unitIds, assignment)
+  elements.mapStatus.textContent = `${loaded.manifest.editUnit === "precinct" ? "Precincts" : "Block groups"} · Resigned2 map`
+  elements.runLabel.textContent = complete ? "Resigned2 map ready" : "Partial Resigned2 map received"
+  elements.generationNote.textContent = complete
+    ? `${context.title ?? "The Resigned2 plan"} is the starting assignment for the next ReCom chain.`
+    : `${assignedCount.toLocaleString()} of ${loaded.graph.unitIds.length.toLocaleString()} units were assigned in Resigned2. The map is shown here, but generation will use ReCom's complete default starting plan.`
+}
+
+/** Sends one immutable generated-plan snapshot to the exact Resigned2 window opened here. */
+function sendToResigned2() {
+  let plan: ReComPlanHandoff
+  try {
+    plan = currentPlanHandoff()
+  } catch (error) {
+    showHandoff(
+      "recom-to-resigned2",
+      "error",
+      "Map is not ready",
+      message(error),
+    )
+    return
+  }
+
+  handoffCleanup()
+  const token = createHandoffToken()
+  const targetOrigin = resigned2Origin()
+  const resignedWindow = window.open(resigned2HandoffURL(token), "_blank")
+  if (!resignedWindow) {
+    showHandoff(
+      "recom-to-resigned2",
+      "error",
+      "Handoff interrupted",
+      "The browser blocked the Resigned2 tab. Allow pop-ups and try again.",
+    )
+    return
+  }
+
+  let planSent = false
+  showHandoff(
+    "recom-to-resigned2",
+    "connecting",
+    "Connecting ReCom and Resigned2",
+    "Waiting for Resigned2 to confirm the private connection.",
+  )
+  const timeout = window.setTimeout(() => {
+    showHandoff(
+      "recom-to-resigned2",
+      "error",
+      "Handoff interrupted",
+      "Resigned2 did not confirm the connection. Close its tab and try again.",
+    )
+    cleanup()
+  }, 20_000)
+  const receive = (event: MessageEvent<unknown>) => {
+    if (event.origin !== targetOrigin || event.source !== resignedWindow) return
+    if (
+      !planSent
+      && isHandoffMessage(event.data, "recom-to-resigned2", "ready", token)
+    ) {
+      planSent = true
+      showHandoff(
+        "recom-to-resigned2",
+        "transferring",
+        "Sending the generated map",
+        "The assignment is moving directly between these browser tabs.",
+      )
+      resignedWindow.postMessage(
+        handoffMessage("recom-to-resigned2", "plan", token, { plan }),
+        targetOrigin,
+      )
+      return
+    }
+    if (isHandoffMessage(event.data, "recom-to-resigned2", "complete", token)) {
+      showHandoff(
+        "recom-to-resigned2",
+        "accepted",
+        "Map received by Resigned2",
+        "The generated assignment is saved as a local Resigned2 draft.",
+      )
+      cleanup()
+      window.setTimeout(hideHandoff, 850)
+      return
+    }
+    if (isHandoffMessage(event.data, "recom-to-resigned2", "error", token)) {
+      showHandoff(
+        "recom-to-resigned2",
+        "error",
+        "Handoff interrupted",
+        typeof event.data.error === "string" ? event.data.error : "Resigned2 could not import this map.",
+      )
+      cleanup()
+    }
+  }
+  const cleanup = () => {
+    window.clearTimeout(timeout)
+    window.removeEventListener("message", receive)
+    handoffCleanup = () => {}
+  }
+  handoffCleanup = cleanup
+  window.addEventListener("message", receive)
+}
+
+function currentPlanHandoff(): ReComPlanHandoff {
+  if (!loaded || !assignment || !lastStatus) {
+    throw new Error("Generate a complete ReCom plan before opening it in Resigned2.")
+  }
+  return {
+    assignment,
+    datasetSlug: loaded.manifest.state.slug,
+    districtCount: loaded.manifest.counts.districts,
+    generatedAt: new Date().toISOString(),
+    output: selectedProposal === null ? currentResultMode() : "proposal",
+    proposal: selectedProposal,
+    seed: elements.seed.value,
+    unitCount: loaded.graph.unitIds.length,
+  }
+}
+
+function showHandoff(
+  direction: HandoffDirection,
+  phase: HandoffAnimationPhase,
+  title: string,
+  detail: string,
+) {
+  elements.handoffVisual.dataset.direction = direction
+  elements.handoffVisual.dataset.phase = phase
+  elements.handoffVisual.setAttribute("aria-label", title)
+  elements.handoffTitle.textContent = title
+  elements.handoffDetail.textContent = detail
+  elements.handoffPacket.textContent = phase === "accepted" ? "✓" : phase === "error" ? "×" : ""
+  elements.handoffClose.hidden = phase !== "error"
+  elements.handoffDialog.hidden = false
+}
+
+function hideHandoff() {
+  if (elements.handoffVisual.dataset.phase !== "error") handoffCleanup()
+  elements.handoffDialog.hidden = true
 }
 
 function downloadAssignment() {

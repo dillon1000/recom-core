@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -sI --max-time 10 \"https://wasm-ar-beta.dillonr.ing/states/index.json\")",
+      "Bash(curl -s --max-time 10 \"https://wasm-ar-beta.dillonr.ing/\" -o /dev/null -w \"%{http_code}\\\\n\")",
+      "Bash(npx wrangler *)"
+    ]
+  }
+}
