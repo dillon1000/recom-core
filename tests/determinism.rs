@@ -33,6 +33,7 @@ fn run_chain() -> Vec<u16> {
             pop_tolerance: 0.05,
             county_surcharge: 10,
             tree_attempts: 12,
+            burst_length: 0,
             frozen_districts: Vec::new(),
         },
         Some(initial),

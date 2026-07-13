@@ -28,6 +28,7 @@ pub struct ChainParams {
     pub pop_tolerance: f64,
     pub county_surcharge: u32,
     pub tree_attempts: u32,
+    pub burst_length: u32,
     pub frozen_districts: Vec<u16>,
 }
 
@@ -36,23 +37,25 @@ pub struct ChainParams {
 pub struct ChainStatus {
     pub steps_accepted: u32,
     pub steps_rejected: u32,
+    pub burst_restarts: u32,
     pub current_score: PlanScore,
     pub best_score: PlanScore,
     pub frontier_size: u32,
 }
 
-/// Why one attempted proposal did or did not advance the chain.
+/// Why one trace event did or did not advance the chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ProposalOutcome {
     Accepted,
+    BurstRestart,
     NoEligibleBoundary,
     NoSpanningTree,
     NoBalancedCut,
 }
 
-/// Metadata for one attempted proposal. Accepted changes occupy the declared range in the owning
-/// [`TraceBatch`]; rejected attempts have an empty range and retain the preceding plan score.
+/// Metadata for one proposal or burst restart. State changes occupy the declared range in the
+/// owning [`TraceBatch`]; rejected attempts have an empty range and retain the preceding score.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProposalTrace {
@@ -93,6 +96,9 @@ pub struct Chain {
     county_surcharge: u32,
     selection_weights: SelectionWeights,
     tree_attempts: u32,
+    burst_length: u32,
+    steps_since_restart: u32,
+    burst_restarts: u32,
     frozen_districts: BTreeSet<u16>,
     steps_accepted: u32,
     steps_rejected: u32,
@@ -156,6 +162,9 @@ impl Chain {
             county_surcharge: params.county_surcharge,
             selection_weights: SelectionWeights::for_county_preservation(params.county_surcharge),
             tree_attempts: params.tree_attempts,
+            burst_length: params.burst_length,
+            steps_since_restart: 0,
+            burst_restarts: 0,
             frozen_districts: params.frozen_districts.into_iter().collect(),
             steps_accepted: 0,
             steps_rejected: 0,
@@ -166,18 +175,35 @@ impl Chain {
 
     pub fn step(&mut self, count: u32) -> ChainStatus {
         for _ in 0..count {
+            let _ = self.maybe_restart();
             self.step_once();
         }
         self.status()
     }
 
-    /// Advances the chain while retaining compact deltas for every accepted proposal and explicit
-    /// reasons for every rejection. The ordinary [`Chain::step`] path remains allocation-light.
+    /// Advances the chain while retaining compact deltas for every accepted proposal and burst
+    /// restart plus explicit reasons for every rejection. The ordinary [`Chain::step`] path remains
+    /// allocation-light between burst boundaries.
     pub fn step_traced(&mut self, count: u32) -> TraceBatch {
         let mut proposals = Vec::with_capacity(count as usize);
         let mut changed_nodes = Vec::new();
         let mut changed_districts = Vec::new();
         for _ in 0..count {
+            if let Some(changes) = self.maybe_restart() {
+                let change_start = changed_nodes.len() as u32;
+                for (node, district) in &changes {
+                    changed_nodes.push(*node);
+                    changed_districts.push(*district);
+                }
+                proposals.push(ProposalTrace {
+                    proposal: self.steps_accepted + self.steps_rejected + self.burst_restarts,
+                    outcome: ProposalOutcome::BurstRestart,
+                    score: self.current_score,
+                    change_start,
+                    change_count: changes.len() as u32,
+                    frontier_changed: false,
+                });
+            }
             let trace = self.step_once();
             let change_start = changed_nodes.len() as u32;
             for (node, district) in &trace.changes {
@@ -185,7 +211,7 @@ impl Chain {
                 changed_districts.push(*district);
             }
             proposals.push(ProposalTrace {
-                proposal: self.steps_accepted + self.steps_rejected,
+                proposal: self.steps_accepted + self.steps_rejected + self.burst_restarts,
                 outcome: trace.outcome,
                 score: self.current_score,
                 change_start,
@@ -252,6 +278,7 @@ impl Chain {
         ChainStatus {
             steps_accepted: self.steps_accepted,
             steps_rejected: self.steps_rejected,
+            burst_restarts: self.burst_restarts,
             current_score: self.current_score,
             best_score: self
                 .frontier
@@ -263,6 +290,7 @@ impl Chain {
     }
 
     fn step_once(&mut self) -> StepTrace {
+        self.steps_since_restart = self.steps_since_restart.saturating_add(1);
         let eligible_edges = self
             .partition
             .cut_edges()
@@ -337,6 +365,33 @@ impl Chain {
             changes: Vec::new(),
             frontier_changed: false,
         }
+    }
+
+    fn maybe_restart(&mut self) -> Option<Vec<(u32, u16)>> {
+        if self.burst_length == 0 || self.steps_since_restart < self.burst_length {
+            return None;
+        }
+        self.steps_since_restart = 0;
+        let target = self
+            .frontier
+            .best_with_weights(self.selection_weights)
+            .expect("every chain frontier contains its initial assignment");
+        let changes = self
+            .partition
+            .assignment()
+            .iter()
+            .zip(&target.assignment)
+            .enumerate()
+            .filter_map(|(node, (current, next))| (current != next).then_some((node as u32, *next)))
+            .collect::<Vec<_>>();
+        if changes.is_empty() {
+            return None;
+        }
+        self.partition
+            .apply_assignment_changes(&self.graph, &self.populations, &changes);
+        self.update_scores();
+        self.burst_restarts += 1;
+        Some(changes)
     }
 
     fn update_scores(&mut self) -> bool {

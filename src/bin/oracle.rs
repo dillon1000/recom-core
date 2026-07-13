@@ -73,6 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             pop_tolerance: arguments.tolerance,
             county_surcharge: arguments.county_surcharge,
             tree_attempts: arguments.tree_attempts,
+            burst_length: 0,
             frozen_districts: Vec::new(),
         },
         Some(assignment),

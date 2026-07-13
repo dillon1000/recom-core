@@ -16,6 +16,8 @@ struct WasmChainParams {
     county_surcharge: f64,
     tree_attempts: u32,
     #[serde(default)]
+    burst_length: Option<u32>,
+    #[serde(default)]
     frozen_districts: Option<Vec<u16>>,
     #[serde(default)]
     initial_assignment: Option<Vec<u16>>,
@@ -88,6 +90,7 @@ impl Chain {
                 pop_tolerance: raw.pop_tolerance,
                 county_surcharge: raw.county_surcharge as u32,
                 tree_attempts: raw.tree_attempts,
+                burst_length: raw.burst_length.unwrap_or_default(),
                 frozen_districts,
             },
             initial_assignment,
