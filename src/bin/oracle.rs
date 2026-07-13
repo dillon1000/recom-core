@@ -39,6 +39,10 @@ struct Arguments {
 struct OracleRecord<'a> {
     step: u32,
     cut_edges: u32,
+    weighted_cut: u64,
+    county_fragments: u32,
+    county_splits: u32,
+    max_deviation_ppm: u64,
     district_pops: &'a [u64],
 }
 
@@ -71,7 +75,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut output,
                 &OracleRecord {
                     step,
-                    cut_edges: status.current_score.cut_edges,
+                    cut_edges: chain.cut_edge_count(),
+                    weighted_cut: status.current_score.weighted_cut,
+                    county_fragments: status.current_score.county_fragments,
+                    county_splits: status.current_score.county_splits,
+                    max_deviation_ppm: status.current_score.max_deviation_ppm,
                     district_pops: chain.district_populations(),
                 },
             )?;
@@ -183,7 +191,7 @@ fn parse_graph(
         offsets.push(flattened.len() as u32);
     }
     let county_flags = vec![0_u8; flattened.len()];
-    let graph = CsrGraph::new(offsets, flattened, county_flags)?;
+    let graph = CsrGraph::new(offsets, flattened, county_flags, None)?;
     Ok((graph, populations, assignment, labels.len() as u16))
 }
 

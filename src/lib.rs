@@ -9,7 +9,6 @@ mod graph;
 mod partition;
 mod rebalance;
 mod rng;
-mod score;
 mod seed;
 mod tree;
 
@@ -20,7 +19,7 @@ pub use chain::{Chain, ChainParams, ChainStatus};
 pub use graph::{CsrGraph, Edge};
 pub use partition::{Partition, PopulationBounds};
 pub use rebalance::RebalanceStatus;
-pub use score::PlanScore;
+pub use recom_scoring::{FrontierEntry, PlanScore};
 
 use std::fmt::{Display, Formatter};
 

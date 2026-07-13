@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use recom_scoring::{FrontierEntry, ParetoArchive, PlanScore};
 use serde::Serialize;
 
 use crate::{
@@ -12,7 +13,6 @@ use crate::{
     partition::{Partition, PopulationBounds},
     rebalance::{rebalance_partition, RebalanceStatus},
     rng::ChainRng,
-    score::PlanScore,
     seed::generate_seed_assignment,
     tree::random_spanning_tree,
     RecomError,
@@ -35,6 +35,7 @@ pub struct ChainStatus {
     pub steps_rejected: u32,
     pub current_score: PlanScore,
     pub best_score: PlanScore,
+    pub frontier_size: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -50,8 +51,7 @@ pub struct Chain {
     steps_accepted: u32,
     steps_rejected: u32,
     current_score: PlanScore,
-    best_score: PlanScore,
-    best_assignment: Vec<u16>,
+    frontier: ParetoArchive,
 }
 
 impl Chain {
@@ -92,8 +92,10 @@ impl Chain {
             }
         };
         let partition = Partition::new(&graph, &populations, assignment, params.districts, bounds)?;
-        let current_score = PlanScore::calculate(&graph, &partition);
-        let best_assignment = partition.assignment().to_vec();
+        let current_score = partition.score();
+        debug_assert_eq!(current_score, partition.full_recompute_score(&graph));
+        let mut frontier = ParetoArchive::default();
+        frontier.insert(current_score, partition.assignment().to_vec());
         Ok(Self {
             graph,
             populations,
@@ -106,8 +108,7 @@ impl Chain {
             steps_accepted: 0,
             steps_rejected: 0,
             current_score,
-            best_score: current_score,
-            best_assignment,
+            frontier,
         })
     }
 
@@ -140,11 +141,29 @@ impl Chain {
     }
 
     pub fn best_assignment(&self) -> &[u16] {
-        &self.best_assignment
+        &self
+            .frontier
+            .best()
+            .expect("every chain frontier contains its initial assignment")
+            .assignment
+    }
+
+    pub fn frontier(&self) -> &[FrontierEntry] {
+        self.frontier.entries()
     }
 
     pub fn district_populations(&self) -> &[u64] {
         self.partition.district_populations()
+    }
+
+    pub fn cut_edge_count(&self) -> u32 {
+        self.partition.cut_edges().len() as u32
+    }
+
+    /// Independently recomputes the current score for debug and integration-test self-checks.
+    #[doc(hidden)]
+    pub fn full_recompute_score(&self) -> PlanScore {
+        self.partition.full_recompute_score(&self.graph)
     }
 
     pub fn status(&self) -> ChainStatus {
@@ -152,7 +171,12 @@ impl Chain {
             steps_accepted: self.steps_accepted,
             steps_rejected: self.steps_rejected,
             current_score: self.current_score,
-            best_score: self.best_score,
+            best_score: self
+                .frontier
+                .best()
+                .expect("every chain frontier contains its initial assignment")
+                .score,
+            frontier_size: self.frontier.entries().len() as u32,
         }
     }
 
@@ -213,13 +237,12 @@ impl Chain {
     }
 
     fn update_scores(&mut self) {
-        self.current_score = PlanScore::calculate(&self.graph, &self.partition);
-        if self
-            .current_score
-            .is_better_than(self.best_score, self.county_surcharge)
-        {
-            self.best_score = self.current_score;
-            self.best_assignment = self.partition.assignment().to_vec();
-        }
+        self.current_score = self.partition.score();
+        debug_assert_eq!(
+            self.current_score,
+            self.partition.full_recompute_score(&self.graph)
+        );
+        self.frontier
+            .insert(self.current_score, self.partition.assignment().to_vec());
     }
 }

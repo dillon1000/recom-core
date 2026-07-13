@@ -66,6 +66,7 @@ impl Chain {
             offsets.to_vec(),
             neighbors.to_vec(),
             edge_county_cross.to_vec(),
+            None,
         )
         .map_err(js_error)?;
         let inner = CoreChain::new(

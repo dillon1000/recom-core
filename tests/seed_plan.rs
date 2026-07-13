@@ -30,7 +30,7 @@ fn seed_and_grow_builds_a_legal_balanced_plan() {
 
 #[test]
 fn graph_validation_rejects_disconnected_input() {
-    let result = CsrGraph::new(vec![0, 0, 0], Vec::new(), Vec::new());
+    let result = CsrGraph::new(vec![0, 0, 0], Vec::new(), Vec::new(), None);
     assert!(result.is_err());
 }
 
