@@ -651,12 +651,18 @@ function outcomeLabel(event: ProposalTrace) {
   if (event.outcome === "burstRestart") return "Restarted · best plan so far"
   if (event.outcome === "noEligibleBoundary") return "Rejected · frozen boundary"
   if (event.outcome === "noSpanningTree") return "Rejected · disconnected merge"
+  if (event.outcome === "nonAdjacentPair") return "Self-loop · non-adjacent pair"
+  if (event.outcome === "balanceBoundExceeded") return "Self-loop · balance bound exceeded"
+  if (event.outcome === "seamRejected") return "Rejected · seam correction"
   return "Rejected · no balanced cut"
 }
 
 function rejectionDescription(event: ProposalTrace) {
   if (event.outcome === "noEligibleBoundary") return "No eligible unfrozen district boundary was available."
   if (event.outcome === "noSpanningTree") return "Tree attempts could not connect the selected district pair."
+  if (event.outcome === "nonAdjacentPair") return "The uniformly selected district pair does not share a boundary."
+  if (event.outcome === "balanceBoundExceeded") return "The tree had more balanced edges than the configured reversible balance bound."
+  if (event.outcome === "seamRejected") return "The proposal self-looped under the reversible seam-length acceptance correction."
   return "No tree edge produced two districts inside the population tolerance."
 }
 

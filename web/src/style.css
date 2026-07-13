@@ -721,7 +721,8 @@ svg { flex-shrink: 0; }
 .proposal-outcome { width: max-content; border: 1px solid var(--border-strong); border-radius: 2px; padding: 3px 5px; color: var(--muted); font-size: 6.5px; }
 .proposal-outcome--accepted { border-color: color-mix(in oklch, var(--ok) 55%, var(--border)); color: color-mix(in oklch, var(--ok) 72%, var(--ink)); }
 .proposal-outcome--burstRestart { border-color: color-mix(in oklch, var(--accent) 55%, var(--border)); color: color-mix(in oklch, var(--accent) 72%, var(--ink)); }
-.proposal-outcome--noEligibleBoundary, .proposal-outcome--noSpanningTree, .proposal-outcome--noBalancedCut { border-color: color-mix(in oklch, var(--danger) 35%, var(--border)); color: var(--danger); }
+.proposal-outcome--nonAdjacentPair { border-color: color-mix(in oklch, var(--accent) 35%, var(--border)); color: var(--muted); }
+.proposal-outcome--noEligibleBoundary, .proposal-outcome--noSpanningTree, .proposal-outcome--noBalancedCut, .proposal-outcome--balanceBoundExceeded, .proposal-outcome--seamRejected { border-color: color-mix(in oklch, var(--danger) 35%, var(--border)); color: var(--danger); }
 
 .proposal-explorer__cloud [data-score-cloud] { display: block; width: 100%; height: 170px; border: 1px solid var(--border-strong); border-radius: 3px; background: var(--card); touch-action: none; }
 .proposal-explorer__cloud-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; color: var(--faint); font-size: 7px; }
