@@ -482,11 +482,19 @@ dependencies = [
  "proptest",
  "rand 0.8.7",
  "rand_chacha 0.3.1",
+ "recom-scoring",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "sha2",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "recom-scoring"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

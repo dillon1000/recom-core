@@ -1,0 +1,10 @@
+[package]
+name = "recom-scoring"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Deterministic incremental scoring, Pareto archives, and ensemble baselines for recom-core"
+repository = "https://github.com/dillon1000/recom-core"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
