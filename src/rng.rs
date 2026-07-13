@@ -24,10 +24,6 @@ impl ChainRng {
         }
     }
 
-    pub(crate) fn coin(&mut self) -> bool {
-        self.0.next_u32() & 1 == 1
-    }
-
     pub(crate) fn edge_key(&mut self, county_cross: bool, preservation: u32) -> u64 {
         let random = u64::from(self.0.next_u32());
         random

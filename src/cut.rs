@@ -1,6 +1,7 @@
 //! Scans a proposed spanning tree for edges whose subtree populations place both resulting
 //! districts inside the global fixed-point population bounds. One candidate is selected from the
-//! chain RNG and returned as explicit node-label changes for incremental application.
+//! chain RNG, minimally relabeled against the current assignment, and returned as explicit
+//! node-label changes for incremental application.
 
 use std::collections::HashMap;
 
@@ -14,6 +15,7 @@ pub(crate) struct CutProposal {
 pub(crate) fn choose_balanced_cut(
     tree: &SpanningTree,
     populations: &[u32],
+    assignment: &[u16],
     bounds: PopulationBounds,
     district_a: u16,
     district_b: u16,
@@ -89,7 +91,24 @@ pub(crate) fn choose_balanced_cut(
             }
         }
     }
-    let child_district = if rng.coin() { district_a } else { district_b };
+    let mut child_a = 0_usize;
+    let mut child_b = 0_usize;
+    let mut other_a = 0_usize;
+    let mut other_b = 0_usize;
+    for (local, node) in tree.nodes.iter().enumerate() {
+        match (child_side[local], assignment[*node as usize]) {
+            (true, district) if district == district_a => child_a += 1,
+            (true, district) if district == district_b => child_b += 1,
+            (false, district) if district == district_a => other_a += 1,
+            (false, district) if district == district_b => other_b += 1,
+            _ => debug_assert!(false, "tree nodes must belong to the merged districts"),
+        }
+    }
+    let child_district = if child_b + other_a <= child_a + other_b {
+        district_a
+    } else {
+        district_b
+    };
     let other_district = if child_district == district_a {
         district_b
     } else {
