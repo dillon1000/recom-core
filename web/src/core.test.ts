@@ -83,7 +83,7 @@ describe("recom-core WASM scoring contract", () => {
   })
 
   it("serializes burst restarts with monotonic event numbers", () => {
-    const chain = createChain(null, 0, 2)
+    const chain = createBurstChain()
     const batch = chain.step_traced(40) as ProposalTraceBatch
     const restarts = batch.proposals.filter((proposal) => proposal.outcome === "burstRestart")
     expect(restarts.length).toBeGreaterThan(0)
@@ -94,6 +94,26 @@ describe("recom-core WASM scoring contract", () => {
     chain.free()
   })
 })
+
+function createBurstChain() {
+  return new Chain(
+    new Uint32Array([0, 2, 5, 7, 9, 12, 14]),
+    new Uint32Array([1, 3, 0, 2, 4, 1, 5, 0, 4, 1, 3, 5, 2, 4]),
+    new Uint8Array(14),
+    null,
+    new Uint32Array(6).fill(1),
+    {
+      districts: 2,
+      seed: 1n,
+      popTolerance: 0.01,
+      countySurcharge: 0,
+      treeAttempts: 8,
+      burstLength: 2,
+      frozenDistricts: new Uint16Array(),
+      initialAssignment: new Uint16Array([1, 1, 1, 2, 2, 2]),
+    },
+  )
+}
 
 function createChain(edgeWeights: Uint32Array | null, countySurcharge = 0, burstLength?: number) {
   return new Chain(
