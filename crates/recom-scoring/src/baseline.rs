@@ -89,7 +89,7 @@ impl BaselineStatistics {
 
 impl PercentileLookup for BaselineStatistics {
     fn percentile_for(&self, value: f64) -> Option<f64> {
-        if !value.is_finite() {
+        if self.count == 0 || !value.is_finite() {
             return None;
         }
         let points = self.ordered_percentiles()?;
@@ -133,8 +133,9 @@ fn histogram(sorted: &[u64], requested_bins: usize) -> Vec<HistogramBin> {
         }];
     }
     let span = max - min + 1;
-    let bin_count = requested_bins.min(span as usize);
-    let width = span.div_ceil(bin_count as u64);
+    let maximum_bins = requested_bins.min(usize::try_from(span).unwrap_or(usize::MAX));
+    let width = span.div_ceil(maximum_bins as u64);
+    let bin_count = usize::try_from(span.div_ceil(width)).expect("bin count cannot exceed request");
     let mut bins = (0..bin_count)
         .map(|index| {
             let bin_min = min + width * index as u64;
@@ -171,6 +172,10 @@ mod tests {
                 .sum::<u64>(),
             4
         );
+        assert!(statistics
+            .histogram
+            .iter()
+            .all(|bin| bin.min <= bin.max && bin.count > 0));
     }
 
     #[test]
