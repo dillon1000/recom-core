@@ -108,7 +108,7 @@ fn graph_from_rows(mut rows: Vec<Vec<u32>>) -> CsrGraph {
         }
         offsets.push(neighbors.len() as u32);
     }
-    CsrGraph::new(offsets, neighbors, county_flags).expect("test graph is valid")
+    CsrGraph::new(offsets, neighbors, county_flags, None).expect("test graph is valid")
 }
 
 fn connect(rows: &mut [Vec<u32>], a: usize, b: usize) {

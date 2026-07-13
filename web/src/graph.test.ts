@@ -35,6 +35,41 @@ describe("public viewer graph adapter", () => {
     expect([...graph.neighbors]).toEqual([1, 0])
     expect([...graph.edgeCountyCross]).toEqual([1, 1])
     expect([...graph.populations]).toEqual([10, 20])
+    expect(graph.edgeWeights).toBeUndefined()
+  })
+
+  it("builds symmetric directed weights aligned with neighbors", () => {
+    const graph = buildGraph(
+      { a: ["b", "c"], b: ["a"], c: ["a"] },
+      [unit("a", "001", 10), unit("b", "001", 20), unit("c", "003", 30)],
+      { a: [12, 34], b: [12], c: [34] },
+    )
+    expect([...graph.neighbors]).toEqual([1, 2, 0, 0])
+    expect([...(graph.edgeWeights ?? [])]).toEqual([12, 34, 12, 34])
+  })
+
+  it("rejects misaligned or asymmetric weight artifacts", () => {
+    const adjacency = { a: ["b"], b: ["a"] }
+    const units = [unit("a", "001", 10), unit("b", "001", 20)]
+    expect(() => buildGraph(adjacency, units, { a: [], b: [5] })).toThrow(/align/)
+    expect(() => buildGraph(adjacency, units, { a: [5], b: [6] })).toThrow(/symmetric/)
+  })
+
+  it("assigns unit weight to deterministic virtual edges", () => {
+    const unitIds = ["a", "b", "c"]
+    const connected = connectComponents(
+      { a: ["b"], b: ["a"], c: [] },
+      unitIds,
+      new Uint16Array([1, 1, 1]),
+      { a: [50], b: [50], c: [] },
+    )
+    expect(connected.virtualEdges).toBe(1)
+    const graph = buildGraph(
+      connected.adjacency,
+      unitIds.map((unitId) => unit(unitId, "001", 10)),
+      connected.edgeWeights,
+    )
+    expect([...graph.edgeWeights ?? []].sort((a, b) => a - b)).toEqual([1, 1, 50, 50])
   })
 
   it("rejects a published assignment outside the requested tolerance", () => {

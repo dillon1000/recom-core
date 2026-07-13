@@ -5,7 +5,15 @@
  * CSR graph arrays. Failures return descriptive messages without partial data.
  */
 import { assignmentToDense, buildGraph, connectComponents } from "./graph"
-import type { AssignmentMap, Manifest, Unit, UnitAdjacency } from "./types"
+import { parseEnsembleBaseline } from "./ensembleBaseline"
+import type {
+  AssignmentMap,
+  EnsembleBaseline,
+  Manifest,
+  Unit,
+  UnitAdjacency,
+  UnitAdjacencyWeights,
+} from "./types"
 import { parseUnits } from "./unitParser"
 
 type Request = { type: "load"; requestId: number; slug: string; dataOrigin: string }
@@ -15,6 +23,7 @@ type WorkerResponse =
       type: "complete"
       requestId: number
       manifest: Manifest
+      baseline?: EnsembleBaseline
       units: Unit[]
       initialAssignment: Uint16Array
       virtualEdges: number
@@ -36,12 +45,21 @@ async function load(message: Request) {
     post({ type: "progress", requestId: message.requestId, phase: "Downloading state graph" })
 
     const statisticsUrl = assetUrl(message.dataOrigin, message.slug, manifest.files.unitStats)
-    const [statistics, adjacency, defaults] = await Promise.all([
+    const [statistics, adjacency, defaults, adjacencyWeights, baseline] = await Promise.all([
       fetch(statisticsUrl).then(requireOk),
       fetchJson<UnitAdjacency>(assetUrl(message.dataOrigin, message.slug, manifest.files.unitAdjacency)),
       fetchJson<{ assignments?: AssignmentMap }>(
         assetUrl(message.dataOrigin, message.slug, manifest.files.defaultAssignments),
       ),
+      manifest.files.unitAdjacencyWeights
+        ? fetchJson<UnitAdjacencyWeights>(
+            assetUrl(message.dataOrigin, message.slug, manifest.files.unitAdjacencyWeights),
+          )
+        : Promise.resolve(undefined),
+      manifest.files.ensembleBaseline
+        ? fetchJson<unknown>(assetUrl(message.dataOrigin, message.slug, manifest.files.ensembleBaseline))
+            .then(parseEnsembleBaseline)
+        : Promise.resolve(undefined),
     ])
     post({ type: "progress", requestId: message.requestId, phase: "Parsing state units" })
     const units = await parseUnits(await statistics.arrayBuffer(), statisticsUrl)
@@ -51,26 +69,27 @@ async function load(message: Request) {
     if (!defaults.assignments) throw new Error("The starting assignment is missing.")
     const unitIds = units.map((unit) => unit.unitId)
     const initialAssignment = assignmentToDense(unitIds, defaults.assignments)
-    const connected = connectComponents(adjacency, unitIds, initialAssignment)
-    const graph = buildGraph(connected.adjacency, units)
+    const connected = connectComponents(adjacency, unitIds, initialAssignment, adjacencyWeights)
+    const graph = buildGraph(connected.adjacency, units, connected.edgeWeights)
     const response: WorkerResponse = {
       type: "complete",
       requestId: message.requestId,
       manifest,
+      ...(baseline ? { baseline } : {}),
       units,
       initialAssignment,
       virtualEdges: connected.virtualEdges,
       graph,
     }
-    self.postMessage(response, {
-      transfer: [
+    const transfer = [
         initialAssignment.buffer,
         graph.edgeCountyCross.buffer,
         graph.neighbors.buffer,
         graph.offsets.buffer,
         graph.populations.buffer,
-      ],
-    })
+      ]
+    if (graph.edgeWeights) transfer.push(graph.edgeWeights.buffer)
+    self.postMessage(response, { transfer })
   } catch (error) {
     post({
       type: "error",

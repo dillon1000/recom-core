@@ -2,11 +2,37 @@
 
 `recom-core` is the deterministic Rust implementation behind Resigned's automatic redistricting. It accepts a population-weighted adjacency graph in compressed sparse row form, creates or validates a contiguous seed partition, and advances a ReCom chain while preserving contiguity and the configured population tolerance.
 
-The same crate is compiled natively for invariant and oracle tests and to `wasm32-unknown-unknown` for the browser worker. Proposal randomness uses a pinned `ChaCha8Rng`; spanning trees use integer random edge keys; population comparisons use integer fixed-point bounds. A seed, graph, assignment, and parameter set therefore produce the same assignments in native and WASM builds. The public generator returns the final seeded chain sample; best-score tracking remains available to a future explicit optimization workflow without collapsing distinct seeds back to a strong reference plan.
+The root crate is compiled natively for invariant and oracle tests and to `wasm32-unknown-unknown` for the browser worker. Proposal randomness uses a pinned `ChaCha8Rng`; spanning trees use integer random edge keys; population comparisons use integer fixed-point bounds. A seed, graph, assignment, and parameter set therefore produce the same assignments in native and WASM builds. The public generator returns the final seeded chain sample; Pareto optimization remains separately available through `best_assignment` and the frontier APIs without collapsing distinct seeds back to a strong reference plan.
+
+## Scoring workspace
+
+`crates/recom-scoring` is the solver-independent scoring library. `recom-core` supplies canonical weighted edges, county-region membership, assignment changes, and district populations; `recom-scoring` owns the score types, incremental bookkeeping, full-recompute oracle, Pareto archive, ensemble statistics, and percentile lookup. Scoring never reads the chain RNG, so enabling weights or inspecting the frontier cannot change the proposal stream.
+
+Each `PlanScore` reports:
+
+- `weightedCut`: the sum of weights on district-boundary edges. Omitted weights default to one, making this the canonical cut-edge count.
+- `countyFragments`: the sum of `distinct districts present - 1` across county regions.
+- `countySplits`: the number of county regions present in multiple districts, retained as a familiar report-only measure.
+- `maxDeviationPpm`: the largest district population deviation from ideal in integer parts per million.
+
+The optimization tuple is `(weightedCut, countyFragments, maxDeviationPpm)`, with every objective minimized. The chain retains mutually nondominated plans in a deterministic 24-entry archive. Identical tuples keep the lexicographically smallest assignment; one deterministic champion for each metric is protected; remaining entries are evicted from the lexicographically largest objective tuple downward. `best_assignment` uses min-max-normalized deterministic selection weights across the retained frontier. The public `countySurcharge` control is a bounded `0–50` county-preservation strength: it maps across the full random edge-key range during proposal generation and supplies the county-fragment selection weight to `recom-scoring`. Zero disables both preferences, 25 gives county fragmentation the combined selection weight of boundary cut and deviation, and 50 gives it twice their combined weight. Raw score metrics and Pareto dominance remain unchanged and auditable.
+
+## Proposal tracing
+
+`Chain::step_traced` advances the identical deterministic proposal stream while returning one compact `ProposalTrace` for every attempted step. Accepted events reference aligned node and district delta arrays; native labels remain zero-based and the WASM boundary converts them to the browser's one-based contract. Rejected events retain the preceding score and report `noEligibleBoundary`, `noSpanningTree`, or `noBalancedCut`. Browser workers retain a full assignment checkpoint every 200 attempts, so any individual proposal can be reconstructed by applying at most one chunk of deltas instead of storing thousands of complete plans. The ordinary `Chain::step` path remains available when trace allocation is unnecessary.
+
+## Optional scoring artifacts
+
+The standalone viewer accepts two optional manifest files without changing the existing adjacency contract:
+
+- `files.unitAdjacencyWeights` names a `Record<string, number[]>` JSON artifact. Every positive integer-meter row must align index-for-index with the unit's neighbor row, and reverse directed entries must agree. Missing artifacts omit the WASM weight array, so every edge defaults to one; deterministic virtual island links also use one.
+- `files.ensembleBaseline` names a JSON artifact with `{ meta, metrics }`. Each metric contains `count`, `mean`, a `p1` through `p99` percentile table, and histogram bins. The viewer validates the artifact and performs clamped linear percentile lookup, but intentionally does not display percentile UI yet.
+
+Artifact generation, state regeneration, publication, and storage operations are offline data-pipeline responsibilities and are not performed by this repository's viewer request path.
 
 ## Public web viewer
 
-The repository includes the complete responsive viewer published at [wasm-ar-beta.dillonr.ing](https://wasm-ar-beta.dillonr.ing). It loads authentic congressional block-group or 2024 precinct geography and graph artifacts for all 50 states, layers generated districts over the public `tiles.totallynotacdn.com` planet archive, runs ReCom inside a dedicated Web Worker, and exports generated unit assignments as JSON. The map can switch from categorical district colors to a continuous Republican–even–Democratic gradient based on each generated district's aggregate 2024 presidential two-party share, while generated district boundaries remain visible above the fills. Unit hover inspection and the plan observatory expose population balance, Census demographic counts and shares, county fragmentation, cut edges, 2024 presidential outcomes, seat–vote and mean–median gaps, efficiency gap, and per-district diagnostics. Precinct statistics retain their source election results and allocate Census measures from intersecting source block groups. Generation stays in the browser; the public data service receives ordinary read-only artifact requests and never receives plans or parameters.
+The repository includes the complete responsive viewer published at [wasm-ar-beta.dillonr.ing](https://wasm-ar-beta.dillonr.ing). It loads authentic congressional block-group or 2024 precinct geography and graph artifacts for all 50 states, layers generated districts over the public `tiles.totallynotacdn.com` planet archive, runs ReCom inside a dedicated Web Worker, and exports generated unit assignments as JSON. Results can switch explicitly between the final neutral chain sample and `recom-scoring`'s deterministic Pareto-selected optimization output, so optimization never silently replaces seed-driven generation. The Proposal Explorer records every accepted or rejected attempt and links timeline playback, rejection explanations, final-frontier filtering, a weighted-cut/county-fragment score cloud, election-seat filters, persistent bookmarks, shareable proposal URLs, two-plan change highlighting, and branch-from-proposal generation directly to the map. The map can switch from categorical district colors to a continuous Republican–even–Democratic gradient based on each generated district's aggregate 2024 presidential two-party share, while generated district boundaries remain visible above the fills. Unit hover inspection and the plan observatory expose population balance, Census demographic counts and shares, county fragmentation, weighted boundary cut, 2024 presidential outcomes, seat–vote and mean–median gaps, efficiency gap, and per-district diagnostics. Precinct statistics retain their source election results and allocate Census measures from intersecting source block groups. Generation stays in the browser; the public data service receives ordinary read-only artifact requests and never receives plans or parameters.
 
 Install dependencies and start the viewer from the repository root:
 
@@ -19,7 +45,7 @@ The development server prints the local URL. The viewer uses the public beta dat
 
 The viewer source lives under `web/`:
 
-- `web/src/data.worker.ts` downloads and validates Arrow or precinct JSON statistics, adjacency, assignment, and PMTiles metadata off the UI thread.
+- `web/src/data.worker.ts` downloads and validates Arrow or precinct JSON statistics, adjacency, assignment, optional scoring artifacts, and PMTiles metadata off the UI thread.
 - `web/src/recom.worker.ts` owns the WASM chain and posts bounded progress updates.
 - `web/src/graph.ts` creates the CSR input and deterministic virtual island links required by published geography.
 - `web/src/map.ts` renders real PMTiles geography, planet landmarks and labels, hover states, and generated district boundaries with MapLibre.

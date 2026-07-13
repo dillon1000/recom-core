@@ -4,7 +4,13 @@
  * outputs include deterministic virtual links for islands and disconnected
  * reference-district pieces so every starting district is contiguous.
  */
-import type { AssignmentMap, GraphInput, Unit, UnitAdjacency } from "./types"
+import type {
+  AssignmentMap,
+  GraphInput,
+  Unit,
+  UnitAdjacency,
+  UnitAdjacencyWeights,
+} from "./types"
 
 export function assignmentToDense(unitIds: string[], assignment: AssignmentMap) {
   return Uint16Array.from(unitIds, (unitId) => {
@@ -43,19 +49,29 @@ export function assignmentWithinTolerance(
   )
 }
 
-export function buildGraph(adjacency: UnitAdjacency, units: Unit[]): GraphInput {
+export function buildGraph(
+  adjacency: UnitAdjacency,
+  units: Unit[],
+  adjacencyWeights?: UnitAdjacencyWeights,
+): GraphInput {
   const unitIds = units.map((unit) => unit.unitId)
   const indexById = new Map(unitIds.map((unitId, index) => [unitId, index]))
   if (indexById.size !== units.length) throw new Error("Unit IDs must be unique.")
+  if (adjacencyWeights) validateAdjacencyWeights(adjacency, unitIds, adjacencyWeights)
 
   const neighborRows = unitIds.map((unitId) =>
     (adjacency[unitId] ?? [])
-      .map((neighbor) => indexById.get(neighbor))
-      .filter((index): index is number => index !== undefined),
+      .map((neighbor, position) => {
+        const index = indexById.get(neighbor)
+        if (index === undefined) return undefined
+        return { index, weight: adjacencyWeights?.[unitId]?.[position] ?? 1 }
+      })
+      .filter((entry): entry is { index: number; weight: number } => entry !== undefined),
   )
   const offsets = new Uint32Array(unitIds.length + 1)
   const neighbors = new Uint32Array(neighborRows.reduce((sum, row) => sum + row.length, 0))
   const edgeCountyCross = new Uint8Array(neighbors.length)
+  const edgeWeights = adjacencyWeights ? new Uint32Array(neighbors.length) : undefined
   const populations = new Uint32Array(unitIds.length)
   let cursor = 0
 
@@ -67,25 +83,44 @@ export function buildGraph(adjacency: UnitAdjacency, units: Unit[]): GraphInput 
     populations[node] = unit.popTotal
     offsets[node] = cursor
     for (const neighbor of neighborRows[node] ?? []) {
-      neighbors[cursor] = neighbor
-      edgeCountyCross[cursor] = Number(unit.countyFips !== units[neighbor]?.countyFips)
+      neighbors[cursor] = neighbor.index
+      edgeCountyCross[cursor] = Number(unit.countyFips !== units[neighbor.index]?.countyFips)
+      if (edgeWeights) edgeWeights[cursor] = neighbor.weight
       cursor += 1
     }
   }
   offsets[unitIds.length] = cursor
-  return { edgeCountyCross, neighbors, offsets, populations, unitIds }
+  return {
+    edgeCountyCross,
+    ...(edgeWeights ? { edgeWeights } : {}),
+    neighbors,
+    offsets,
+    populations,
+    unitIds,
+  }
 }
 
 export function connectComponents(
   adjacency: UnitAdjacency,
   unitIds: string[],
   assignment: Uint16Array,
+  adjacencyWeights?: UnitAdjacencyWeights,
 ) {
   if (assignment.length !== unitIds.length) throw new Error("Starting assignment does not match units.")
+  if (adjacencyWeights) validateAdjacencyWeights(adjacency, unitIds, adjacencyWeights)
   const unitIndex = new Map(unitIds.map((unitId, index) => [unitId, index]))
   const allUnits = new Set(unitIds)
   const graphComponents = components(adjacency, unitIds, allUnits)
-  let next = cloneAdjacency(adjacency, unitIds)
+  const next = cloneAdjacency(adjacency, unitIds)
+  const weightMaps = adjacencyWeights
+    ? new Map(unitIds.map((unitId) => [
+        unitId,
+        new Map((adjacency[unitId] ?? []).map((neighbor, index) => [
+          neighbor,
+          adjacencyWeights[unitId]?.[index] ?? 1,
+        ])),
+      ]))
+    : undefined
   let virtualEdges = 0
 
   if (graphComponents.length > 1) {
@@ -106,7 +141,7 @@ export function connectComponents(
         }
       }
       if (!from || !to) throw new Error("Cannot link an empty adjacency component.")
-      addEdge(next, from, to)
+      addEdge(next, from, to, weightMaps)
       virtualEdges += 1
       for (const unitId of component) connected.add(unitId)
       updateAnchors(anchors, component, assignment, unitIndex)
@@ -130,13 +165,19 @@ export function connectComponents(
       const from = minimumUnit(component)
       const to = minimumUnit(connected)
       if (!from || !to) throw new Error("Cannot link an empty district component.")
-      addEdge(next, from, to)
+      addEdge(next, from, to, weightMaps)
       virtualEdges += 1
       for (const unitId of component) connected.add(unitId)
     }
   }
 
-  return { adjacency: next, virtualEdges }
+  const edgeWeights = weightMaps
+    ? Object.fromEntries(unitIds.map((unitId) => [
+        unitId,
+        (next[unitId] ?? []).map((neighbor) => weightMaps.get(unitId)?.get(neighbor) ?? 1),
+      ]))
+    : undefined
+  return { adjacency: next, ...(edgeWeights ? { edgeWeights } : {}), virtualEdges }
 }
 
 function components(adjacency: UnitAdjacency, unitIds: string[], allowed: Set<string>) {
@@ -167,9 +208,47 @@ function cloneAdjacency(adjacency: UnitAdjacency, unitIds: string[]) {
   return Object.fromEntries(unitIds.map((unitId) => [unitId, [...(adjacency[unitId] ?? [])]]))
 }
 
-function addEdge(adjacency: UnitAdjacency, from: string, to: string) {
+function addEdge(
+  adjacency: UnitAdjacency,
+  from: string,
+  to: string,
+  weightMaps?: Map<string, Map<string, number>>,
+) {
   adjacency[from] = sortedUnique([...(adjacency[from] ?? []), to])
   adjacency[to] = sortedUnique([...(adjacency[to] ?? []), from])
+  weightMaps?.get(from)?.set(to, weightMaps.get(from)?.get(to) ?? 1)
+  weightMaps?.get(to)?.set(from, weightMaps.get(to)?.get(from) ?? 1)
+}
+
+function validateAdjacencyWeights(
+  adjacency: UnitAdjacency,
+  unitIds: string[],
+  weights: UnitAdjacencyWeights,
+) {
+  const unitSet = new Set(unitIds)
+  for (const unitId of unitIds) {
+    const neighbors = adjacency[unitId] ?? []
+    const row = weights[unitId]
+    if (!row || row.length !== neighbors.length) {
+      throw new Error(`Adjacency weights for ${unitId} must align with its neighbor row.`)
+    }
+    const uniqueNeighbors = new Set(neighbors)
+    if (uniqueNeighbors.size !== neighbors.length) {
+      throw new Error(`Adjacency for ${unitId} contains duplicate neighbors.`)
+    }
+    for (let index = 0; index < neighbors.length; index += 1) {
+      const neighbor = neighbors[index]
+      const weight = row[index]
+      if (!Number.isSafeInteger(weight) || weight === undefined || weight < 1 || weight > 0xffff_ffff) {
+        throw new Error(`Adjacency weight for ${unitId} → ${neighbor ?? "unknown"} must fit a positive u32.`)
+      }
+      if (!neighbor || !unitSet.has(neighbor)) continue
+      const reverseIndex = (adjacency[neighbor] ?? []).indexOf(unitId)
+      if (reverseIndex < 0 || weights[neighbor]?.[reverseIndex] !== weight) {
+        throw new Error(`Adjacency weights for ${unitId} and ${neighbor} must be symmetric.`)
+      }
+    }
+  }
 }
 
 function districtAnchors(

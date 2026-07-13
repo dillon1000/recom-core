@@ -1,6 +1,7 @@
 //! Validates the directed CSR input and derives the undirected edge and county-region indexes used
 //! by proposals and incremental partition updates. Inputs are offsets, neighbors, and one county-
-//! crossing flag per directed edge; outputs are immutable graph indexes safe to share across steps.
+//! crossing flag and optional weight per directed edge; outputs are immutable graph indexes safe to
+//! share across proposal and scoring steps.
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
@@ -12,6 +13,7 @@ pub struct Edge {
     pub a: u32,
     pub b: u32,
     pub county_cross: bool,
+    pub weight: u32,
 }
 
 /// A connected, symmetric adjacency graph plus indexes derived from its CSR representation.
@@ -20,6 +22,7 @@ pub struct CsrGraph {
     offsets: Vec<u32>,
     neighbors: Vec<u32>,
     directed_county_cross: Vec<u8>,
+    directed_edge_weights: Vec<u32>,
     edges: Vec<Edge>,
     incident_edges: Vec<Vec<u32>>,
     county_regions: Vec<Vec<u32>>,
@@ -32,6 +35,7 @@ impl CsrGraph {
         offsets: Vec<u32>,
         neighbors: Vec<u32>,
         edge_county_cross: Vec<u8>,
+        edge_weights: Option<Vec<u32>>,
     ) -> Result<Self, RecomError> {
         if offsets.len() < 2 {
             return Err(RecomError::new("graph must contain at least one node"));
@@ -42,6 +46,12 @@ impl CsrGraph {
         if neighbors.len() != edge_county_cross.len() {
             return Err(RecomError::new(
                 "edge_county_cross must align one-for-one with neighbors",
+            ));
+        }
+        let edge_weights = edge_weights.unwrap_or_else(|| vec![1; neighbors.len()]);
+        if neighbors.len() != edge_weights.len() {
+            return Err(RecomError::new(
+                "edge_weights must align one-for-one with neighbors",
             ));
         }
         if offsets.windows(2).any(|pair| pair[0] > pair[1]) {
@@ -60,7 +70,7 @@ impl CsrGraph {
 
         let node_count = offsets.len() - 1;
         let mut directed_seen = HashSet::with_capacity(neighbors.len());
-        let mut edge_parts = BTreeMap::<(u32, u32), (bool, u8)>::new();
+        let mut edge_parts = BTreeMap::<(u32, u32), (bool, u32, u8)>::new();
 
         for source in 0..node_count {
             let start = offsets[source] as usize;
@@ -87,23 +97,32 @@ impl CsrGraph {
                 };
                 let direction = if source < target { 1 } else { 2 };
                 let county_cross = edge_county_cross[directed_index] == 1;
+                let weight = edge_weights[directed_index];
                 match edge_parts.get_mut(&key) {
-                    Some((existing_flag, directions)) => {
+                    Some((existing_flag, existing_weight, directions)) => {
                         if *existing_flag != county_cross {
                             return Err(RecomError::new(
                                 "reverse directed edges must share the same county flag",
                             ));
                         }
+                        if *existing_weight != weight {
+                            return Err(RecomError::new(
+                                "reverse directed edges must share the same edge weight",
+                            ));
+                        }
                         *directions |= direction;
                     }
                     None => {
-                        edge_parts.insert(key, (county_cross, direction));
+                        edge_parts.insert(key, (county_cross, weight, direction));
                     }
                 }
             }
         }
 
-        if edge_parts.values().any(|(_, directions)| *directions != 3) {
+        if edge_parts
+            .values()
+            .any(|(_, _, directions)| *directions != 3)
+        {
             return Err(RecomError::new(
                 "CSR adjacency must contain both directions of every edge",
             ));
@@ -111,7 +130,12 @@ impl CsrGraph {
 
         let edges = edge_parts
             .into_iter()
-            .map(|((a, b), (county_cross, _))| Edge { a, b, county_cross })
+            .map(|((a, b), (county_cross, weight, _))| Edge {
+                a,
+                b,
+                county_cross,
+                weight,
+            })
             .collect::<Vec<_>>();
         let mut incident_edges = vec![Vec::new(); node_count];
         for (edge_index, edge) in edges.iter().enumerate() {
@@ -123,6 +147,7 @@ impl CsrGraph {
             offsets,
             neighbors,
             directed_county_cross: edge_county_cross,
+            directed_edge_weights: edge_weights,
             edges,
             incident_edges,
             county_regions: Vec::new(),
@@ -170,6 +195,21 @@ impl CsrGraph {
 
     pub fn directed_county_cross(&self) -> &[u8] {
         &self.directed_county_cross
+    }
+
+    pub fn directed_edge_weights(&self) -> &[u32] {
+        &self.directed_edge_weights
+    }
+
+    pub(crate) fn scoring_edges(&self) -> Vec<recom_scoring::WeightedEdge> {
+        self.edges
+            .iter()
+            .map(|edge| recom_scoring::WeightedEdge {
+                a: edge.a,
+                b: edge.b,
+                weight: edge.weight,
+            })
+            .collect()
     }
 
     fn is_connected(&self) -> bool {

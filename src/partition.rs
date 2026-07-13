@@ -4,6 +4,8 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
+use recom_scoring::{full_recompute, IncrementalScore, PlanScore};
+
 use crate::{graph::CsrGraph, RecomError};
 
 const PPM_SCALE: u64 = 1_000_000;
@@ -78,6 +80,7 @@ pub struct Partition {
     cut_edges: Vec<u32>,
     cut_edge_positions: Vec<Option<usize>>,
     district_unit_counts: Vec<usize>,
+    scoring: IncrementalScore,
 }
 
 impl Partition {
@@ -140,12 +143,23 @@ impl Partition {
         }
         validate_contiguity(graph, &assignment, districts)?;
 
+        let total_population = district_pops.iter().sum();
+        let scoring = IncrementalScore::new(
+            graph.node_count(),
+            &graph.scoring_edges(),
+            graph.county_regions(),
+            &assignment,
+            districts,
+            total_population,
+        )
+        .map_err(|error| RecomError::new(format!("could not initialize scoring: {error}")))?;
         let mut partition = Self {
             assignment,
             district_pops,
             cut_edges: Vec::new(),
             cut_edge_positions: vec![None; graph.edges().len()],
             district_unit_counts,
+            scoring,
         };
         for edge_index in 0..graph.edges().len() {
             partition.refresh_cut_edge(graph, edge_index as u32);
@@ -163,6 +177,27 @@ impl Partition {
 
     pub fn cut_edges(&self) -> &[u32] {
         &self.cut_edges
+    }
+
+    pub fn score(&self) -> PlanScore {
+        self.scoring
+            .score(&self.district_pops)
+            .expect("partition population totals always match its scoring index")
+    }
+
+    /// Independently recomputes every metric for debug and integration-test self-checks.
+    #[doc(hidden)]
+    pub fn full_recompute_score(&self, graph: &CsrGraph) -> PlanScore {
+        full_recompute(
+            graph.node_count(),
+            &graph.scoring_edges(),
+            graph.county_regions(),
+            &self.assignment,
+            &self.district_pops,
+            self.district_pops.len() as u16,
+            self.district_pops.iter().sum(),
+        )
+        .expect("validated partition state must support full score recomputation")
     }
 
     pub(crate) fn district_unit_count(&self, district: u16) -> usize {
@@ -187,6 +222,9 @@ impl Partition {
             self.district_pops[new_district as usize] += population;
             self.district_unit_counts[old_district as usize] -= 1;
             self.district_unit_counts[new_district as usize] += 1;
+            self.scoring
+                .apply_node_change(node_index, old_district, new_district)
+                .expect("partition assignment changes preserve scoring invariants");
             self.assignment[node_index] = new_district;
             affected_edges.extend(graph.incident_edges(node_index).iter().copied());
         }
@@ -236,6 +274,9 @@ impl Partition {
     fn refresh_cut_edge(&mut self, graph: &CsrGraph, edge_index: u32) {
         let edge = graph.edges()[edge_index as usize];
         let should_be_cut = self.assignment[edge.a as usize] != self.assignment[edge.b as usize];
+        self.scoring
+            .set_edge_cut(edge_index as usize, should_be_cut)
+            .expect("partition edge index must exist in scoring state");
         match (should_be_cut, self.cut_edge_positions[edge_index as usize]) {
             (true, None) => {
                 self.cut_edge_positions[edge_index as usize] = Some(self.cut_edges.len());

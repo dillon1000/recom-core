@@ -9,18 +9,17 @@ mod graph;
 mod partition;
 mod rebalance;
 mod rng;
-mod score;
 mod seed;
 mod tree;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
-pub use chain::{Chain, ChainParams, ChainStatus};
+pub use chain::{Chain, ChainParams, ChainStatus, ProposalOutcome, ProposalTrace, TraceBatch};
 pub use graph::{CsrGraph, Edge};
 pub use partition::{Partition, PopulationBounds};
 pub use rebalance::RebalanceStatus;
-pub use score::PlanScore;
+pub use recom_scoring::{FrontierEntry, PlanScore};
 
 use std::fmt::{Display, Formatter};
 

@@ -38,8 +38,8 @@ export type PlanAnalytics = {
   medianAbsoluteDeviationPercent: number
   populationRange: number
   acceptanceRate: number
-  cutEdges: number
-  cutEdgesPerDistrict: number
+  weightedCut: number
+  weightedCutPerDistrict: number
   counties: { total: number; splitCount: number; districtPairs: number }
   demographics: {
     totals: Demographics
@@ -150,8 +150,8 @@ export function computeAnalytics(
     medianAbsoluteDeviationPercent: median(absoluteDeviations),
     populationRange: Math.max(0, ...populations) - Math.min(...populations),
     acceptanceRate: totalSteps ? status.stepsAccepted / totalSteps : 0,
-    cutEdges: status.currentScore.cutEdges,
-    cutEdgesPerDistrict: status.currentScore.cutEdges / districtCount,
+    weightedCut: status.currentScore.weightedCut,
+    weightedCutPerDistrict: status.currentScore.weightedCut / districtCount,
     counties: {
       total: districtsByCounty.size,
       splitCount: [...districtsByCounty.values()].filter((districtSet) => districtSet.size > 1).length,

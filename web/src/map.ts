@@ -29,6 +29,7 @@ export class ViewerMap {
   private readonly map: maplibregl.Map
   private animationFrame: number | null = null
   private colorMode: MapColorMode = "district"
+  private comparisonAssignment: AssignmentMap | null = null
   private districtDemShares: Array<number | null> = []
   private hoveredFeature: { id: string | number; source: string; sourceLayer: string } | null = null
   private hoveredUnitId: string | null = null
@@ -39,11 +40,14 @@ export class ViewerMap {
     private readonly onHover: (unitId: string | null) => void,
   ) {
     installProtocol()
+    const floatingPanelLayout = window.matchMedia("(min-width: 821px)").matches
     this.map = new maplibregl.Map({
       attributionControl: false,
       bounds: manifest.state.bounds,
       container,
-      fitBoundsOptions: { padding: 28 },
+      fitBoundsOptions: {
+        padding: floatingPanelLayout ? { top: 36, right: 44, bottom: 100, left: 396 } : 28,
+      },
       maxBounds: paddedBounds(manifest.state.bounds),
       maxZoom: 13,
       minZoom: 1,
@@ -54,7 +58,7 @@ export class ViewerMap {
         layers: [{ id: "background", type: "background", paint: { "background-color": "#eeeae3" } }],
       },
     })
-    this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right")
+    this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
     this.map.addControl(new maplibregl.ScaleControl({ maxWidth: 110, unit: "imperial" }), "bottom-right")
     this.map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right")
     this.map.on("load", () => {
@@ -80,6 +84,11 @@ export class ViewerMap {
   setColorMode(colorMode: MapColorMode) {
     this.colorMode = colorMode
     if (this.map.isStyleLoaded()) this.applyColorMode()
+  }
+
+  setComparison(assignment: AssignmentMap | null) {
+    this.comparisonAssignment = assignment
+    if (this.map.isStyleLoaded()) this.scheduleSync()
   }
 
   destroy() {
@@ -223,9 +232,15 @@ export class ViewerMap {
       if (seen.has(unitId)) continue
       seen.add(unitId)
       const district = this.assignment[unitId] ?? 0
+      const comparing = this.comparisonAssignment !== null
       this.map.setFeatureState(
         { id: feature.id, source, sourceLayer },
-        { demShare: districtDemocraticShare(this.districtDemShares, district), district },
+        {
+          changed: comparing && this.comparisonAssignment?.[unitId] !== district,
+          comparing,
+          demShare: districtDemocraticShare(this.districtDemShares, district),
+          district,
+        },
       )
     }
   }
@@ -371,6 +386,8 @@ function unitPaint(districts: number): FillLayerSpecification["paint"] {
     "fill-opacity": [
       "case",
       ["boolean", ["feature-state", "hover"], false], 0.94,
+      ["boolean", ["feature-state", "changed"], false], 0.92,
+      ["boolean", ["feature-state", "comparing"], false], 0.24,
       [">", ["coalesce", ["feature-state", "district"], 0], 0], 0.68,
       0.3,
     ],

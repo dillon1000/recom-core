@@ -4,8 +4,9 @@ import { computeAnalytics } from "./analytics"
 import type { ChainStatus, Unit } from "./types"
 
 const status: ChainStatus = {
-  bestScore: { countySplits: 1, cutEdges: 3 },
-  currentScore: { countySplits: 2, cutEdges: 4 },
+  bestScore: { weightedCut: 3, countyFragments: 1, countySplits: 1, maxDeviationPpm: 50_000 },
+  currentScore: { weightedCut: 4, countyFragments: 2, countySplits: 2, maxDeviationPpm: 50_000 },
+  frontierSize: 2,
   stepsAccepted: 9,
   stepsRejected: 1,
 }
@@ -28,7 +29,7 @@ describe("computeAnalytics", () => {
     expect(analytics.maxDeviationPercent).toBeCloseTo(5)
     expect(analytics.counties.splitCount).toBe(2)
     expect(analytics.acceptanceRate).toBe(0.9)
-    expect(analytics.cutEdges).toBe(4)
+    expect(analytics.weightedCut).toBe(4)
     expect(analytics.districts[1]?.demographicShares.black).toBeCloseTo(0.5)
     expect(analytics.election.demSeats).toBe(1)
     expect(analytics.election.competitiveDistricts).toBe(1)

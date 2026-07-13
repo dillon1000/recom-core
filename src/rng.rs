@@ -28,7 +28,39 @@ impl ChainRng {
         self.0.next_u32() & 1 == 1
     }
 
-    pub(crate) fn edge_key(&mut self, county_cross: bool, surcharge: u64) -> u64 {
-        u64::from(self.0.next_u32()).saturating_add(if county_cross { surcharge } else { 0 })
+    pub(crate) fn edge_key(&mut self, county_cross: bool, preservation: u32) -> u64 {
+        let random = u64::from(self.0.next_u32());
+        random
+            + if county_cross {
+                county_crossing_penalty(preservation)
+            } else {
+                0
+            }
+    }
+}
+
+/// Maps the public 0–50 preference onto the same 32-bit range as the random edge key. At 50,
+/// within-county edges always sort before county-crossing edges when a spanning tree permits it.
+fn county_crossing_penalty(preservation: u32) -> u64 {
+    u64::from(u32::MAX) * u64::from(preservation)
+        / u64::from(recom_scoring::MAX_COUNTY_PRESERVATION)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn county_preservation_spans_the_random_key_range() {
+        assert_eq!(county_crossing_penalty(0), 0);
+        assert_eq!(county_crossing_penalty(25), u64::from(u32::MAX) / 2);
+        assert_eq!(county_crossing_penalty(50), u64::from(u32::MAX));
+
+        let mut plain = ChainRng::new(42);
+        let mut preserved = ChainRng::new(42);
+        assert_eq!(
+            preserved.edge_key(true, 50) - plain.edge_key(true, 0),
+            u64::from(u32::MAX)
+        );
     }
 }

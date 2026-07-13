@@ -33,6 +33,7 @@ impl Chain {
         offsets: &[u32],
         neighbors: &[u32],
         edge_county_cross: &[u8],
+        edge_weights: JsValue,
         populations: &[u32],
         params: JsValue,
     ) -> Result<Chain, JsError> {
@@ -41,10 +42,10 @@ impl Chain {
         if !raw.county_surcharge.is_finite()
             || raw.county_surcharge < 0.0
             || raw.county_surcharge.fract() != 0.0
-            || raw.county_surcharge > 9_007_199_254_740_991.0
+            || raw.county_surcharge > f64::from(recom_scoring::MAX_COUNTY_PRESERVATION)
         {
             return Err(JsError::new(
-                "county surcharge must be a nonnegative safe integer",
+                "county preservation must be an integer between 0 and 50",
             ));
         }
         let frozen_districts = raw
@@ -62,10 +63,20 @@ impl Chain {
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()?;
+        let edge_weights = if edge_weights.is_null() || edge_weights.is_undefined() {
+            None
+        } else if edge_weights.is_instance_of::<js_sys::Uint32Array>() {
+            Some(js_sys::Uint32Array::from(edge_weights).to_vec())
+        } else {
+            return Err(JsError::new(
+                "edge weights must be a Uint32Array, null, or undefined",
+            ));
+        };
         let graph = CsrGraph::new(
             offsets.to_vec(),
             neighbors.to_vec(),
             edge_county_cross.to_vec(),
+            edge_weights,
         )
         .map_err(js_error)?;
         let inner = CoreChain::new(
@@ -75,7 +86,7 @@ impl Chain {
                 districts: raw.districts,
                 seed: raw.seed,
                 pop_tolerance: raw.pop_tolerance,
-                county_surcharge: raw.county_surcharge as u64,
+                county_surcharge: raw.county_surcharge as u32,
                 tree_attempts: raw.tree_attempts,
                 frozen_districts,
             },
@@ -88,6 +99,15 @@ impl Chain {
     pub fn step(&mut self, count: u32) -> Result<JsValue, JsError> {
         serde_wasm_bindgen::to_value(&self.inner.step(count))
             .map_err(|error| JsError::new(&format!("could not serialize chain status: {error}")))
+    }
+
+    pub fn step_traced(&mut self, count: u32) -> Result<JsValue, JsError> {
+        let mut batch = self.inner.step_traced(count);
+        for district in &mut batch.changed_districts {
+            *district += 1;
+        }
+        serde_wasm_bindgen::to_value(&batch)
+            .map_err(|error| JsError::new(&format!("could not serialize proposal trace: {error}")))
     }
 
     pub fn rebalance(&mut self, tolerance: f64) -> Result<JsValue, JsError> {
@@ -103,6 +123,26 @@ impl Chain {
 
     pub fn best_assignment(&self) -> Vec<u16> {
         one_based_assignment(self.inner.best_assignment())
+    }
+
+    pub fn frontier(&self) -> Result<JsValue, JsError> {
+        let scores = self
+            .inner
+            .frontier()
+            .iter()
+            .map(|entry| entry.score)
+            .collect::<Vec<_>>();
+        serde_wasm_bindgen::to_value(&scores)
+            .map_err(|error| JsError::new(&format!("could not serialize frontier: {error}")))
+    }
+
+    pub fn frontier_assignment(&self, index: usize) -> Result<Vec<u16>, JsError> {
+        let assignment = self
+            .inner
+            .frontier()
+            .get(index)
+            .ok_or_else(|| JsError::new("frontier assignment index is out of range"))?;
+        Ok(one_based_assignment(&assignment.assignment))
     }
 }
 

@@ -16,7 +16,7 @@ pub(crate) fn random_spanning_tree(
     district_a: u16,
     district_b: u16,
     rng: &mut ChainRng,
-    county_surcharge: u64,
+    county_surcharge: u32,
 ) -> Option<SpanningTree> {
     let nodes = assignment
         .iter()
