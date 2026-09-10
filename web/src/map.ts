@@ -20,7 +20,7 @@ const fineSource = "units"
 const coarseSource = "units-coarse"
 const edgeSource = "district-edges"
 const planetSource = "planet"
-const planetArchive = "https://tiles.totallynotacdn.com/map/planet-2026-05-21.pmtiles"
+const planetArchive = "https://tiles.totallynotacdn.com/map/vector/planet/2026/09/09/20260909.pmtiles"
 const planetGlyphs = "https://tiles.totallynotacdn.com/map/glyphs/{fontstack}/{range}.pbf"
 let protocolInstalled = false
 
